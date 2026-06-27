@@ -1,0 +1,340 @@
+{
+  "name": "WF-04: People Search + Reveal",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "id": "t1",
+      "name": "Every 30 Min"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.id, c.name, c.domain FROM company c WHERE c.status IN ('ICP_QUALIFIED', 'ICP_REVIEW_APPROVED') AND c.domain IS NOT NULL AND NOT EXISTS (SELECT 1 FROM contact ct WHERE ct.\"companyId\" = c.id) ORDER BY c.\"scoreTotal\" DESC LIMIT 10",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [220, 0],
+      "id": "q1",
+      "name": "Get Companies Needing Contacts",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/mixed_people/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ q_organization_domains: $json.domain, person_seniorities: ['owner', 'founder', 'c_suite', 'vp', 'director'], per_page: 5 }) }}",
+        "options": {
+          "timeout": 15000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 500
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0],
+      "id": "api1",
+      "name": "Apollo People Search",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "1dsAguZcT6GOVHgj",
+          "name": "Apollo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const people = $json.people || [];\nconst companyId = $('Get Companies Needing Contacts').item.json.id;\n\n// Take top 2 by seniority\nconst seniorityOrder = ['owner', 'founder', 'c_suite', 'vp', 'director'];\nconst sorted = people.sort((a, b) => {\n  const aIdx = seniorityOrder.indexOf(a.seniority || 'director');\n  const bIdx = seniorityOrder.indexOf(b.seniority || 'director');\n  return aIdx - bIdx;\n});\n\nconst top2 = sorted.slice(0, 2);\nreturn { json: { companyId, people: top2 } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0],
+      "id": "code1",
+      "name": "Pick Top 2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.people.length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        },
+        "combineOperation": "all"
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [880, 0],
+      "id": "if1",
+      "name": "Has People?"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const items = [];\nfor (const person of $json.people) {\n  items.push({ companyId: $json.companyId, personId: person.id });\n}\nreturn items.map(i => ({ json: i }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 0],
+      "id": "code2",
+      "name": "Split People"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/people/match",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ id: $json.personId }) }}",
+        "options": {
+          "timeout": 15000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1000
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 0],
+      "id": "api2",
+      "name": "Apollo Reveal",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "1dsAguZcT6GOVHgj",
+          "name": "Apollo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const p = $json.person || $json;\nconst companyId = $('Split People').item.json.companyId;\nreturn { json: {\n  companyId,\n  firstName: p.first_name || null,\n  lastName: p.last_name || null,\n  email: p.email || null,\n  phone: p.phone_numbers?.[0]?.sanitized_number || null,\n  linkedin: p.linkedin_url || null,\n  title: p.title || null,\n  seniority: p.seniority || null,\n  apolloId: p.id || null,\n  verified: !!p.email\n}};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 0],
+      "id": "code3",
+      "name": "Map Contact"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ \"INSERT INTO contact (id, \\\"companyId\\\", \\\"firstName\\\", \\\"lastName\\\", email, phone, linkedin, title, seniority, \\\"apolloId\\\", revealed, verified, source) VALUES (gen_random_uuid(), '\" + $json.companyId + \"', \" + ($json.firstName ? \"'\" + $json.firstName.replace(/'/g, \"''\") + \"'\" : 'NULL') + \", \" + ($json.lastName ? \"'\" + $json.lastName.replace(/'/g, \"''\") + \"'\" : 'NULL') + \", \" + ($json.email ? \"'\" + $json.email + \"'\" : 'NULL') + \", \" + ($json.phone ? \"'\" + $json.phone + \"'\" : 'NULL') + \", \" + ($json.linkedin ? \"'\" + $json.linkedin + \"'\" : 'NULL') + \", \" + ($json.title ? \"'\" + $json.title.replace(/'/g, \"''\") + \"'\" : 'NULL') + \", \" + ($json.seniority ? \"'\" + $json.seniority + \"'\" : 'NULL') + \", \" + ($json.apolloId ? \"'\" + $json.apolloId + \"'\" : 'NULL') + \", true, \" + $json.verified + \", 'apollo_reveal') ON CONFLICT DO NOTHING\" }}",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1760, 0],
+      "id": "q2",
+      "name": "Insert Contact",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ \"UPDATE company SET status = 'CONTACT_ACQUIRED', \\\"updatedAt\\\" = NOW() WHERE id = '\" + $json.companyId + \"'\" }}",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1980, 0],
+      "id": "q3",
+      "name": "Mark CONTACT_ACQUIRED",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1100, 200],
+      "id": "noop1",
+      "name": "No People Found"
+    }
+  ],
+  "connections": {
+    "Every 30 Min": {
+      "main": [
+        [
+          {
+            "node": "Get Companies Needing Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Companies Needing Contacts": {
+      "main": [
+        [
+          {
+            "node": "Apollo People Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo People Search": {
+      "main": [
+        [
+          {
+            "node": "Pick Top 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Top 2": {
+      "main": [
+        [
+          {
+            "node": "Has People?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has People?": {
+      "main": [
+        [
+          {
+            "node": "Split People",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No People Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split People": {
+      "main": [
+        [
+          {
+            "node": "Apollo Reveal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo Reveal": {
+      "main": [
+        [
+          {
+            "node": "Map Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map Contact": {
+      "main": [
+        [
+          {
+            "node": "Insert Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Contact": {
+      "main": [
+        [
+          {
+            "node": "Mark CONTACT_ACQUIRED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "name": "revops",
+  "private": true,
+  "workspaces": {
+    "packages": [
+      "apps/*",
+      "packages/*"
+    ],
+    "catalog": {
+      "dotenv": "^17.2.2",
+      "zod": "^4.1.13",
+      "typescript": "^6",
+      "lucide-react": "^0.546.0",
+      "next": "^16.2.0",
+      "next-themes": "^0.4.6",
+      "react": "^19.2.6",
+      "react-dom": "^19.2.6",
+      "sonner": "^2.0.5",
+      "@prisma/client": "^7.8.0",
+      "@orpc/server": "^1.13.14",
+      "@orpc/client": "^1.13.14",
+      "@orpc/openapi": "^1.13.14",
+      "@orpc/zod": "^1.13.14",
+      "better-auth": "1.6.11",
+      "@types/react": "^19.2.15",
+      "@types/react-dom": "^19.2.3",
+      "tailwindcss": "^4.1.18"
+    }
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "check-types": "turbo check-types",
+    "dev:web": "turbo -F web dev",
+    "db:push": "turbo -F @revops/db db:push",
+    "db:studio": "turbo -F @revops/db db:studio",
+    "db:generate": "turbo -F @revops/db db:generate",
+    "db:migrate": "turbo -F @revops/db db:migrate",
+    "db:start": "turbo -F @revops/db db:start",
+    "db:watch": "turbo -F @revops/db db:watch",
+    "db:stop": "turbo -F @revops/db db:stop",
+    "db:down": "turbo -F @revops/db db:down",
+    "db:clean": "turbo -F @revops/db db:clean",
+    "db:seed": "turbo -F @revops/db db:seed",
+    "db:seed-dev": "turbo -F @revops/db db:seed-dev",
+    "db:seed-prod": "turbo -F @revops/db db:seed-prod",
+    "deploy:n8n": "bun run workflows/deploy-credentials.ts && bun run workflows/deploy.ts",
+    "check": "ultracite check",
+    "fix": "ultracite fix",
+    "deploy:n8n:credentials": "bun run workflows/deploy-credentials.ts"
+  },
+  "dependencies": {
+    "@revops/env": "workspace:*",
+    "dotenv": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.16",
+    "@revops/config": "workspace:*",
+    "@types/node": "^22.13.14",
+    "lefthook": "latest",
+    "turbo": "^2.9.16",
+    "typescript": "catalog:",
+    "ultracite": "7.8.3"
+  },
+  "packageManager": "bun@1.3.13"
+}

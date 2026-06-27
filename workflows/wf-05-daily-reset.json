@@ -1,0 +1,58 @@
+{
+  "name": "WF-05: Daily Reset + Stale Monitor",
+  "nodes": [
+    {
+      "parameters": {"rule": {"interval": [{"field": "cronExpression", "expression": "0 0 * * *"}]}},
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "id": "t1",
+      "name": "Midnight Daily"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE discovery_run SET status = 'FAILED', error = 'Stale: running > 2 hours', \"completedAt\" = NOW() WHERE status = 'RUNNING' AND \"startedAt\" < NOW() - INTERVAL '2 hours'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [220, 0],
+      "id": "q1",
+      "name": "Fail Stale Runs",
+      "credentials": {"postgres": {"id": "mvx8V6R6tpqp0GEJ", "name": "RevOps PostgreSQL"}}
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE campaign SET status = 'COMPLETED', \"updatedAt\" = NOW() WHERE status = 'ACTIVE' AND NOT EXISTS (SELECT 1 FROM discovery_run WHERE \"campaignId\" = campaign.id AND status IN ('PENDING', 'RUNNING'))",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 0],
+      "id": "q2",
+      "name": "Complete Finished Campaigns",
+      "credentials": {"postgres": {"id": "mvx8V6R6tpqp0GEJ", "name": "RevOps PostgreSQL"}}
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO metric (id, key, date, value, \"limit\") VALUES (gen_random_uuid(), 'cells_scraped', CURRENT_DATE, 0, 10), (gen_random_uuid(), 'sonar_calls', CURRENT_DATE, 0, 500), (gen_random_uuid(), 'apollo_reveals', CURRENT_DATE, 0, 200) ON CONFLICT (key, date) DO NOTHING",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [660, 0],
+      "id": "q3",
+      "name": "Init Daily Metrics",
+      "credentials": {"postgres": {"id": "mvx8V6R6tpqp0GEJ", "name": "RevOps PostgreSQL"}}
+    }
+  ],
+  "connections": {
+    "Midnight Daily": {"main": [[{"node": "Fail Stale Runs", "type": "main", "index": 0}]]},
+    "Fail Stale Runs": {"main": [[{"node": "Complete Finished Campaigns", "type": "main", "index": 0}]]},
+    "Complete Finished Campaigns": {"main": [[{"node": "Init Daily Metrics", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"}
+}

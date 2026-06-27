@@ -1,0 +1,47 @@
+{
+  "name": "@revops/db",
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "db:push": "prisma db push",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio",
+    "db:start": "docker compose up -d",
+    "db:watch": "docker compose up",
+    "db:stop": "docker compose stop",
+    "db:down": "docker compose down",
+    "db:clean": "bun run src/seed/clean.ts",
+    "db:seed": "bun run src/seed/dev.ts",
+    "db:seed-dev": "bun run src/seed/dev.ts",
+    "db:seed-prod": "bun run src/seed/prod.ts"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "catalog:",
+    "@revops/env": "workspace:*",
+    "@turf/area": "^7.3.5",
+    "@turf/boolean-point-in-polygon": "^7.3.5",
+    "@turf/helpers": "^7.3.5",
+    "@turf/intersect": "^7.3.5",
+    "@turf/square-grid": "^7.3.5",
+    "dotenv": "catalog:",
+    "pg": "^8.17.1",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@faker-js/faker": "^9.4.0",
+    "@revops/config": "workspace:*",
+    "@types/pg": "^8.16.0",
+    "prisma": "^7.8.0",
+    "prisma-json-types-generator": "^5.1.0",
+    "typescript": "catalog:"
+  }
+}

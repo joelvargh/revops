@@ -1,0 +1,70 @@
+{
+  "name": "WF-03c: ICP Score Calculator",
+  "nodes": [
+    {
+      "parameters": {"rule": {"interval": [{"field": "minutes", "minutesInterval": 15}]}},
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "id": "t1",
+      "name": "Every 15 Min"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT value::text FROM setting WHERE key = 'icp_scoring_weights'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [220, 0],
+      "id": "w1",
+      "name": "Get ICP Weights",
+      "credentials": {"postgres": {"id": "mvx8V6R6tpqp0GEJ", "name": "RevOps PostgreSQL"}}
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, name, industry, \"employeeCount\", \"revenueMm\", category FROM company WHERE status = 'FILTERED' AND enrichment IS NOT NULL AND enrichment->>'data_found' = 'true' ORDER BY \"updatedAt\" ASC LIMIT 50",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 0],
+      "id": "q1",
+      "name": "Get Enriched Companies",
+      "credentials": {"postgres": {"id": "mvx8V6R6tpqp0GEJ", "name": "RevOps PostgreSQL"}}
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const weights = JSON.parse($('Get ICP Weights').item.json.value);\nconst d = $json;\n\nconst ind = (d.industry || d.category || '').toLowerCase();\nlet industryScore = 0;\nfor (const rule of weights.industry_rules || []) {\n  if (rule.keywords.some(k => ind.includes(k))) { industryScore = rule.score; break; }\n}\nif (!industryScore) industryScore = weights.industry_default || 5;\n\nlet sizeScore = 0;\nconst emp = d.employeeCount;\nif (emp !== null && emp !== undefined) {\n  for (const rule of weights.size_rules || []) {\n    if (emp >= rule.min && emp <= rule.max) { sizeScore = rule.score; break; }\n  }\n}\n\nlet revenueScore = 0;\nconst rev = d.revenueMm;\nif (rev !== null && rev !== undefined) {\n  for (const rule of weights.revenue_rules || []) {\n    if (rev >= rule.min && rev <= rule.max) { revenueScore = rule.score; break; }\n  }\n}\n\nconst dmScore = 0;\nconst total = industryScore + sizeScore + revenueScore + dmScore;\nconst thresholds = weights.thresholds || { qualified: 70, review: 50 };\nlet status;\nif (total >= thresholds.qualified) status = 'ICP_QUALIFIED';\nelse if (total >= thresholds.review) status = 'ICP_REVIEW_PENDING';\nelse status = 'ICP_DISQUALIFIED';\n\nreturn { json: { companyId: d.id, scoreTotal: total, status, breakdown: { industry_fit: industryScore, company_size: sizeScore, revenue: revenueScore, decision_maker: dmScore } } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0],
+      "id": "code1",
+      "name": "Calculate ICP Score"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ \"UPDATE company SET status = '\" + $json.status + \"', \\\"scoreTotal\\\" = \" + $json.scoreTotal + \", \\\"scoreBreakdown\\\" = '\" + JSON.stringify($json.breakdown) + \"'::jsonb, \\\"updatedAt\\\" = NOW() WHERE id = '\" + $json.companyId + \"'\" }}",
+        "options": {"queryBatching": "independently"}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [880, 0],
+      "id": "q2",
+      "name": "Update Score + Status",
+      "credentials": {"postgres": {"id": "mvx8V6R6tpqp0GEJ", "name": "RevOps PostgreSQL"}}
+    }
+  ],
+  "connections": {
+    "Every 15 Min": {"main": [[{"node": "Get ICP Weights", "type": "main", "index": 0}]]},
+    "Get ICP Weights": {"main": [[{"node": "Get Enriched Companies", "type": "main", "index": 0}]]},
+    "Get Enriched Companies": {"main": [[{"node": "Calculate ICP Score", "type": "main", "index": 0}]]},
+    "Calculate ICP Score": {"main": [[{"node": "Update Score + Status", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"}
+}

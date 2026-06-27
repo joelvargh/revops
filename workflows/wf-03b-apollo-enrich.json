@@ -1,0 +1,226 @@
+{
+  "name": "WF-03b: Apollo Org Enrichment",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "id": "t1",
+      "name": "Every 15 Min"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, name, domain, city, state FROM company WHERE status = 'ENRICHMENT_PENDING' AND domain IS NOT NULL ORDER BY \"createdAt\" ASC LIMIT 20",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [220, 0],
+      "id": "q1",
+      "name": "Get ENRICHMENT_PENDING",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/organizations/enrich",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ domain: $json.domain }) }}",
+        "options": {
+          "timeout": 15000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1000
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0],
+      "id": "api1",
+      "name": "Apollo Org Enrich",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "1dsAguZcT6GOVHgj",
+          "name": "Apollo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const org = $json.organization || {};\nconst companyId = $('Get ENRICHMENT_PENDING').item.json.id;\nconst hasData = !!(org.estimated_num_employees || org.annual_revenue);\nreturn { json: {\n  companyId,\n  hasData,\n  employees: org.estimated_num_employees || null,\n  revenue_millions: org.annual_revenue ? Math.round(org.annual_revenue / 1000000) : null,\n  industry: org.industry || null,\n  source: 'apollo'\n}};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0],
+      "id": "code1",
+      "name": "Parse Apollo"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ String($json.hasData) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "combineOperation": "all"
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [880, 0],
+      "id": "if1",
+      "name": "Apollo Has Data?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ \"UPDATE company SET enrichment = '\" + JSON.stringify({ employees: $json.employees, revenue_millions: $json.revenue_millions, industry: $json.industry, data_found: true, source: 'apollo' }).replace(/'/g, \"''\") + \"'::jsonb, \\\"employeeCount\\\" = \" + ($json.employees || 'NULL') + \", \\\"revenueMm\\\" = \" + ($json.revenue_millions || 'NULL') + \", industry = \" + ($json.industry ? \"'\" + $json.industry.replace(/'/g, \"''\") + \"'\" : 'NULL') + \", \\\"updatedAt\\\" = NOW() WHERE id = '\" + $json.companyId + \"'\" }}",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1100, -100],
+      "id": "q2",
+      "name": "Store Apollo Data",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ \"UPDATE company SET status = 'RESEARCH_PENDING', \\\"updatedAt\\\" = NOW() WHERE id = '\" + $json.companyId + \"'\" }}",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1100, 100],
+      "id": "q3",
+      "name": "Mark RESEARCH_PENDING",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 15 Min": {
+      "main": [
+        [
+          {
+            "node": "Get ENRICHMENT_PENDING",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get ENRICHMENT_PENDING": {
+      "main": [
+        [
+          {
+            "node": "Apollo Org Enrich",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo Org Enrich": {
+      "main": [
+        [
+          {
+            "node": "Parse Apollo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Apollo": {
+      "main": [
+        [
+          {
+            "node": "Apollo Has Data?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apollo Has Data?": {
+      "main": [
+        [
+          {
+            "node": "Store Apollo Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark RESEARCH_PENDING",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

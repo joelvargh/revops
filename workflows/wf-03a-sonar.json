@@ -1,0 +1,255 @@
+{
+  "name": "WF-03a: Sonar Research",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "id": "t1",
+      "name": "Every 15 Min"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT value::text FROM setting WHERE key = 'sonar_system_prompt'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [220, 0],
+      "id": "prompt1",
+      "name": "Get Sonar Prompt",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, name, address, city, state, category, domain FROM company WHERE status = 'PRE_FILTERED' ORDER BY \"createdAt\" ASC LIMIT 30",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 0],
+      "id": "q1",
+      "name": "Get PRE_FILTERED",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'perplexity/sonar', messages: [{ role: 'system', content: $('Get Sonar Prompt').item.json.value }, { role: 'user', content: 'For the company \"' + $json.name + '\" located at \"' + ($json.address || $json.city + ', ' + $json.state) + '\", Google Maps category: \"' + ($json.category || 'unknown') + '\".' }] }) }}",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1500
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 0],
+      "id": "api1",
+      "name": "Sonar Research",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "vV9Z5i3PyzFxmxKO",
+          "name": "OpenRouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const content = $json.choices[0].message.content;\nlet parsed;\ntry {\n  const match = content.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(match ? match[0] : content);\n} catch(e) {\n  parsed = { employees: null, revenue_millions: null, industry: null, data_found: false };\n}\nconst companyId = $('Get PRE_FILTERED').item.json.id;\nconst domain = $('Get PRE_FILTERED').item.json.domain;\nreturn { json: { ...parsed, companyId, domain } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 0],
+      "id": "code1",
+      "name": "Parse Sonar"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ String($json.data_found) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "combineOperation": "all"
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1100, 0],
+      "id": "if1",
+      "name": "Data Found?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ \"UPDATE company SET enrichment = '\" + JSON.stringify({ employees: $json.employees, revenue_millions: $json.revenue_millions, industry: $json.industry, data_found: true, source: 'sonar' }).replace(/'/g, \"''\") + \"'::jsonb, \\\"employeeCount\\\" = \" + ($json.employees || 'NULL') + \", \\\"revenueMm\\\" = \" + ($json.revenue_millions || 'NULL') + \", industry = \" + ($json.industry ? \"'\" + $json.industry.replace(/'/g, \"''\") + \"'\" : 'NULL') + \", \\\"updatedAt\\\" = NOW() WHERE id = '\" + $json.companyId + \"'\" }}",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1320, -100],
+      "id": "q2",
+      "name": "Store Sonar Data",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ \"UPDATE company SET status = 'ENRICHMENT_PENDING', \\\"updatedAt\\\" = NOW() WHERE id = '\" + $json.companyId + \"'\" }}",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1320, 100],
+      "id": "q3",
+      "name": "Mark ENRICHMENT_PENDING",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 15 Min": {
+      "main": [
+        [
+          {
+            "node": "Get Sonar Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Sonar Prompt": {
+      "main": [
+        [
+          {
+            "node": "Get PRE_FILTERED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get PRE_FILTERED": {
+      "main": [
+        [
+          {
+            "node": "Sonar Research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sonar Research": {
+      "main": [
+        [
+          {
+            "node": "Parse Sonar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Sonar": {
+      "main": [
+        [
+          {
+            "node": "Data Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Found?": {
+      "main": [
+        [
+          {
+            "node": "Store Sonar Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark ENRICHMENT_PENDING",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

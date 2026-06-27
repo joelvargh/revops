@@ -1,0 +1,33 @@
+{
+  "name": "@revops/mail",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "default": "./src/*.ts"
+    },
+    "./templates/*": {
+      "default": "./src/templates/*.tsx"
+    }
+  },
+  "scripts": {
+    "dev": "email dev --dir src/templates --port 3002"
+  },
+  "dependencies": {
+    "@revops/env": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-email": "^6.0.0",
+    "resend": "^6.14.0"
+  },
+  "devDependencies": {
+    "@react-email/ui": "6.6.5",
+    "@revops/config": "workspace:*",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "typescript": "catalog:"
+  }
+}

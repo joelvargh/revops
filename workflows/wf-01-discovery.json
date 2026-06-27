@@ -1,0 +1,418 @@
+{
+  "name": "WF-01: Discovery Runner",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "id": "t1",
+      "name": "Every 30 Min"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT dr.id, dr.\"campaignId\", gc.\"bboxSouth\", gc.\"bboxWest\", gc.\"bboxNorth\", gc.\"bboxEast\", c.\"searchTerm\", c.source FROM discovery_run dr JOIN grid_cell gc ON gc.id = dr.\"gridCellId\" JOIN campaign c ON c.id = dr.\"campaignId\" WHERE dr.status = 'PENDING' AND c.status = 'ACTIVE' ORDER BY gc.row, gc.col LIMIT 1",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [220, 0],
+      "id": "q1",
+      "name": "Get Next Pending Run",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ]
+        },
+        "combineOperation": "all"
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [440, 0],
+      "id": "if1",
+      "name": "Has Pending?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ \"UPDATE discovery_run SET status = 'RUNNING', \\\"startedAt\\\" = NOW() WHERE id = '\" + $('Get Next Pending Run').first().json.id + \"'\" }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [660, 0],
+      "id": "q2",
+      "name": "Mark Running",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/solidcode~google-maps-scraper-2-5-per-1-000-results/runs",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": []
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ searchQueries: [$('Get Next Pending Run').first().json.searchTerm], boundingBox: { south: $('Get Next Pending Run').first().json.bboxSouth, west: $('Get Next Pending Run').first().json.bboxWest, north: $('Get Next Pending Run').first().json.bboxNorth, east: $('Get Next Pending Run').first().json.bboxEast }, maxResults: 0, language: 'en', countryCode: 'US' }) }}",
+        "options": {
+          "timeout": 30000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 0],
+      "id": "api1",
+      "name": "Start Apify Run",
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "w2KZi6AKoZhAUu7Y",
+          "name": "Apify"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.apify.com/v2/actor-runs/' + $json.data.id + '' }}",
+        "options": {
+          "timeout": 10000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 0],
+      "id": "api2",
+      "name": "Poll Run Status",
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "w2KZi6AKoZhAUu7Y",
+          "name": "Apify"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.data.status }}",
+              "rightValue": "SUCCEEDED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "combineOperation": "all"
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1320, 0],
+      "id": "if2",
+      "name": "Run Done?"
+    },
+    {
+      "parameters": {
+        "amount": 15,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1320, 200],
+      "id": "wait1",
+      "name": "Wait 15s"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.apify.com/v2/datasets/' + $('Poll Run Status').first().json.data.defaultDatasetId + '/items&limit=5000' }}",
+        "options": {
+          "timeout": 60000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 0],
+      "id": "api3",
+      "name": "Fetch Dataset",
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "w2KZi6AKoZhAUu7Y",
+          "name": "Apify"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const i = $json;\nconst campaignId = $('Get Next Pending Run').first().json.campaignId;\nreturn { json: {\n  name: i.title || i.name || 'Unknown',\n  domain: i.website ? i.website.replace(/^https?:\\/\\//, '').replace(/^www\\./, '').split('/')[0] : null,\n  phone: i.phone || null,\n  placeId: i.placeId || null,\n  googleMapsUrl: i.url || null,\n  address: i.address || null,\n  city: i.city || null,\n  state: i.state || null,\n  zip: i.postalCode || null,\n  country: 'US',\n  lat: i.location?.lat || null,\n  lng: i.location?.lng || null,\n  category: i.categoryName || null,\n  categories: JSON.stringify(i.categories || []),\n  website: i.website || null,\n  rating: i.totalScore || null,\n  reviewCount: i.reviewsCount || null,\n  isClosed: i.permanentlyClosed || false,\n  source: 'google_maps',\n  campaignId: campaignId\n}};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 0],
+      "id": "code1",
+      "name": "Map Fields"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ \"INSERT INTO company (id, name, domain, phone, \\\"placeId\\\", \\\"googleMapsUrl\\\", address, city, state, zip, country, lat, lng, category, categories, website, rating, \\\"reviewCount\\\", \\\"isClosed\\\", source, \\\"campaignId\\\", status) VALUES (gen_random_uuid(), '\" + ($json.name || '').replace(/'/g, \"''\") + \"', \" + ($json.domain ? \"'\" + $json.domain + \"'\" : 'NULL') + \", \" + ($json.phone ? \"'\" + $json.phone.replace(/'/g, \"''\") + \"'\" : 'NULL') + \", \" + ($json.placeId ? \"'\" + $json.placeId + \"'\" : 'NULL') + \", \" + ($json.googleMapsUrl ? \"'\" + $json.googleMapsUrl + \"'\" : 'NULL') + \", \" + ($json.address ? \"'\" + $json.address.replace(/'/g, \"''\") + \"'\" : 'NULL') + \", \" + ($json.city ? \"'\" + $json.city.replace(/'/g, \"''\") + \"'\" : 'NULL') + \", \" + ($json.state ? \"'\" + $json.state.replace(/'/g, \"''\") + \"'\" : 'NULL') + \", \" + ($json.zip ? \"'\" + $json.zip + \"'\" : 'NULL') + \", 'US', \" + ($json.lat || 'NULL') + \", \" + ($json.lng || 'NULL') + \", \" + ($json.category ? \"'\" + $json.category.replace(/'/g, \"''\") + \"'\" : 'NULL') + \", \" + ($json.categories ? \"'\" + $json.categories.replace(/'/g, \"''\") + \"'\" : \"'[]'\") + \"::text[], \" + ($json.website ? \"'\" + $json.website + \"'\" : 'NULL') + \", \" + ($json.rating || 'NULL') + \", \" + ($json.reviewCount || 'NULL') + \", \" + ($json.isClosed || false) + \", 'google_maps', '\" + $json.campaignId + \"', 'DISCOVERED') ON CONFLICT (\\\"placeId\\\") DO NOTHING\" }}",
+        "options": {
+          "queryBatching": "independently"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1980, 0],
+      "id": "q3",
+      "name": "Insert Companies",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst runId = $('Get Next Pending Run').first().json.id;\nconst total = $('Fetch Dataset').first().json.length || items.length;\nreturn [{ json: { runId, total, inserted: items.length } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 0],
+      "id": "code2",
+      "name": "Count Results"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ \"UPDATE discovery_run SET status = 'COMPLETED', \\\"resultsFound\\\" = \" + $json.total + \", \\\"resultsNew\\\" = \" + $json.inserted + \", \\\"completedAt\\\" = NOW() WHERE id = '\" + $json.runId + \"'\" }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2420, 0],
+      "id": "q4",
+      "name": "Mark Completed",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [660, 200],
+      "id": "noop1",
+      "name": "No Pending Jobs"
+    }
+  ],
+  "connections": {
+    "Every 30 Min": {
+      "main": [
+        [
+          {
+            "node": "Get Next Pending Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Next Pending Run": {
+      "main": [
+        [
+          {
+            "node": "Has Pending?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Pending?": {
+      "main": [
+        [
+          {
+            "node": "Mark Running",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Pending Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Running": {
+      "main": [
+        [
+          {
+            "node": "Start Apify Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Apify Run": {
+      "main": [
+        [
+          {
+            "node": "Poll Run Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Run Status": {
+      "main": [
+        [
+          {
+            "node": "Run Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Done?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Dataset",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 15s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 15s": {
+      "main": [
+        [
+          {
+            "node": "Poll Run Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Dataset": {
+      "main": [
+        [
+          {
+            "node": "Map Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map Fields": {
+      "main": [
+        [
+          {
+            "node": "Insert Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Companies": {
+      "main": [
+        [
+          {
+            "node": "Count Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Results": {
+      "main": [
+        [
+          {
+            "node": "Mark Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": ""
+  }
+}

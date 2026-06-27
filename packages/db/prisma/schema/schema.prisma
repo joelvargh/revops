@@ -1,0 +1,362 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated"
+  moduleFormat = "esm"
+}
+
+generator json {
+  provider  = "prisma-json-types-generator"
+  namespace = "PrismaJson"
+  allowAny  = false
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ═══════════════════════════════════════════════════════════
+// AUTH (Better Auth)
+// ═══════════════════════════════════════════════════════════
+
+model User {
+  id            String    @id
+  name          String
+  email         String
+  emailVerified Boolean   @default(false)
+  image         String?
+  role          String    @default("user") // admin, user
+  banned        Boolean?  @default(false)
+  banReason     String?
+  banExpires    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions Session[]
+  accounts Account[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id                   String   @id
+  expiresAt            DateTime
+  token                String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  ipAddress            String?
+  userAgent            String?
+  userId               String
+  impersonatedBy       String?
+  activeOrganizationId String?
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// ═══════════════════════════════════════════════════════════
+// GEOGRAPHY
+// ═══════════════════════════════════════════════════════════
+
+model Country {
+  id   String @id @default(cuid())
+  code String @unique // ISO 3166-1 alpha-2: US, GB, CA
+  name String
+
+  regions Region[]
+
+  @@map("country")
+}
+
+model Region {
+  id        String @id @default(cuid())
+  name      String // Texas, London, Ontario
+  code      String // TX, LDN, ON
+  countryId String
+  cellSize  Float  @default(0.5) // degrees, used when generating cells
+
+  bboxSouth Float
+  bboxWest  Float
+  bboxNorth Float
+  bboxEast  Float
+
+  /// [GeoJsonPolygon]
+  polygon   Json?  // State/region boundary polygon for cell clipping
+
+  cellsGenerated Boolean @default(false)
+
+  country   Country          @relation(fields: [countryId], references: [id])
+  cells     GridCell[]
+  campaigns CampaignRegion[]
+
+  @@unique([countryId, code])
+  @@map("region")
+}
+
+model GridCell {
+  id       String @id @default(cuid())
+  regionId String
+  row      Int
+  col      Int
+
+  bboxSouth Float
+  bboxWest  Float
+  bboxNorth Float
+  bboxEast  Float
+
+  /// [GeoJsonPolygon]
+  geometry  Json?  // GeoJSON Polygon for Apify customGeolocation
+
+  region        Region         @relation(fields: [regionId], references: [id])
+  discoveryRuns DiscoveryRun[]
+
+  @@unique([regionId, row, col])
+  @@map("grid_cell")
+}
+
+// ═══════════════════════════════════════════════════════════
+// DISCOVERY
+// ═══════════════════════════════════════════════════════════
+
+model Campaign {
+  id         String         @id @default(cuid())
+  name       String
+  searchTerm String
+  source     String         @default("google_maps")
+  status     CampaignStatus @default(ACTIVE)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  regions       CampaignRegion[]
+  discoveryRuns DiscoveryRun[]
+
+  @@map("campaign")
+}
+
+enum CampaignStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+}
+
+model CampaignRegion {
+  id         String @id @default(cuid())
+  campaignId String
+  regionId   String
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+  region   Region   @relation(fields: [regionId], references: [id])
+
+  @@unique([campaignId, regionId])
+  @@map("campaign_region")
+}
+
+model DiscoveryRun {
+  id         String           @id @default(cuid())
+  campaignId String
+  gridCellId String?
+
+  // Snapshotted from GridCell at run creation — stable even after cell regeneration
+  bboxSouth Float?
+  bboxWest  Float?
+  bboxNorth Float?
+  bboxEast  Float?
+  /// [GeoJsonPolygon]
+  geometry  Json?
+
+  status       DiscoveryRunStatus @default(PENDING)
+  resultsFound Int                @default(0)
+  resultsNew   Int                @default(0)
+  externalRunId String?           // Apify run ID
+  error        String?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime           @default(now())
+
+  campaign Campaign  @relation(fields: [campaignId], references: [id])
+  gridCell GridCell? @relation(fields: [gridCellId], references: [id], onDelete: SetNull)
+
+  @@unique([campaignId, gridCellId])
+  @@index([status])
+  @@map("discovery_run")
+}
+
+enum DiscoveryRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+// ═══════════════════════════════════════════════════════════
+// CORE
+// ═══════════════════════════════════════════════════════════
+
+model Company {
+  id     String        @id @default(cuid())
+  status CompanyStatus @default(DISCOVERED)
+
+  // Identity (dedup keys)
+  name          String
+  domain        String?
+  phone         String?
+  placeId       String?  @unique
+  googleMapsUrl String?
+
+  // Location
+  address String?
+  city    String?
+  state   String?
+  zip     String?
+  country String?
+  lat     Float?
+  lng     Float?
+
+  // Basic info (from scraping)
+  category    String?
+  categories  String[]
+  website     String?
+  rating      Float?
+  reviewCount Int?
+  isClosed    Boolean @default(false)
+
+  // Enrichment (from Sonar / Apollo)
+  /// [CompanyEnrichment]
+  enrichment    Json?
+  industry      String?
+  employeeCount Int?
+  revenueMm     Float?
+
+  // ICP Score
+  scoreTotal Int?
+  /// [ScoreBreakdown]
+  scoreBreakdown Json?
+
+  // Review
+  reviewedBy String?
+  reviewedAt DateTime?
+  reviewNote String?
+
+  // Source tracking
+  source       String?
+  campaignId   String?
+  discoveredAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contacts Contact[]
+
+  @@index([status])
+  @@index([domain])
+  @@index([phone])
+  @@index([city, state])
+  @@index([campaignId])
+  @@map("company")
+}
+
+enum CompanyStatus {
+  DISCOVERED
+  FILTERED
+  EXCLUDED
+  ENRICHMENT_PENDING
+  RESEARCH_PENDING
+  ICP_QUALIFIED
+  ICP_REVIEW_PENDING
+  ICP_DISQUALIFIED
+  ICP_REVIEW_APPROVED
+  ICP_REVIEW_REJECTED
+  CONTACT_ACQUIRED
+  READY
+}
+
+model Contact {
+  id        String  @id @default(cuid())
+  companyId String?
+
+  firstName  String?
+  lastName   String?
+  email      String?
+  phone      String?
+  linkedin   String?
+
+  title      String?
+  seniority  String?
+  department String?
+
+  source    String?
+  apolloId  String?
+  revealed  Boolean @default(false)
+  verified  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company? @relation(fields: [companyId], references: [id])
+
+  @@index([companyId])
+  @@index([email])
+  @@map("contact")
+}
+
+// ═══════════════════════════════════════════════════════════
+// SYSTEM
+// ═══════════════════════════════════════════════════════════
+
+model Setting {
+  id       String @id @default(cuid())
+  category String
+  key      String @unique
+  /// [SettingValue]
+  value    Json
+  label    String?
+
+  @@index([category])
+  @@map("setting")
+}
+
+model Metric {
+  id    String   @id @default(cuid())
+  key   String
+  date  DateTime @default(now()) @db.Date
+  value Int      @default(0)
+  limit Int?
+
+  @@unique([key, date])
+  @@index([key])
+  @@map("metric")
+}
