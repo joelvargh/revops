@@ -5,7 +5,13 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronsUpDown, Layers } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
-import { Layer, Map, type MapRef, Popup, Source } from "react-map-gl/maplibre";
+import {
+	Layer,
+	Map as MapGL,
+	type MapRef,
+	Popup,
+	Source,
+} from "react-map-gl/maplibre";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -73,7 +79,10 @@ export function TerritoryMap() {
 				row: cell.row,
 				col: cell.col,
 			},
-			geometry: (cell as any).geometry ?? {
+			geometry: (cell.geometry as {
+				type: "Polygon";
+				coordinates: number[][][];
+			} | null) ?? {
 				type: "Polygon" as const,
 				coordinates: [
 					[
@@ -148,7 +157,7 @@ export function TerritoryMap() {
 		<div className="relative h-full w-full overflow-hidden">
 			{/* Map */}
 			{selectedCampaign ? (
-				<Map
+				<MapGL
 					initialViewState={{ longitude: -95.4, latitude: 29.8, zoom: 8 }}
 					interactiveLayerIds={["cells-fill"]}
 					mapStyle="https://tiles.openfreemap.org/styles/liberty"
@@ -276,7 +285,7 @@ export function TerritoryMap() {
 							</div>
 						</Popup>
 					)}
-				</Map>
+				</MapGL>
 			) : (
 				<div className="flex h-full items-center justify-center bg-muted/30">
 					<div className="space-y-3 text-center">
@@ -317,7 +326,18 @@ export function TerritoryMap() {
 												onSelect={() => {
 													setSelectedCampaign(c.id);
 													setComboboxOpen(false);
-													const rgn = (c as any).regions?.[0]?.region;
+													const rgn = (
+														c as {
+															regions?: {
+																region: {
+																	bboxWest: number;
+																	bboxSouth: number;
+																	bboxEast: number;
+																	bboxNorth: number;
+																};
+															}[];
+														}
+													).regions?.[0]?.region;
 													if (rgn && mapRef.current) {
 														mapRef.current.fitBounds(
 															[

@@ -89,7 +89,15 @@ export const campaignsRouter = {
 						data: { cellSize: input.cellSize },
 					});
 				}
-				const cells = [];
+				const cells: Array<{
+					regionId: string;
+					row: number;
+					col: number;
+					bboxSouth: number;
+					bboxWest: number;
+					bboxNorth: number;
+					bboxEast: number;
+				}> = [];
 				let row = 0;
 				for (let lat = region.bboxSouth; lat < region.bboxNorth; lat += size) {
 					let col = 0;
@@ -209,40 +217,93 @@ export const campaignsRouter = {
 			return { success: true };
 		}),
 
-	// Get discovery runs for territory map — uses snapshotted bbox/geometry, stable after cell regeneration
+	// Returns ALL grid cells for the campaign's regions, with the latest discovery run
+	// status merged in. Cells with no run get status PENDING so the full state grid is visible.
 	gridCells: protectedProcedure
 		.input(z.object({ campaignId: z.string() }))
 		.handler(async ({ input }) => {
 			const { createPrismaClient } = await import("@revops/db");
 			const prisma = createPrismaClient();
-			const runs = await prisma.discoveryRun.findMany({
+
+			// 1. Resolve which regions this campaign covers
+			const campaignRegions = await prisma.campaignRegion.findMany({
 				where: { campaignId: input.campaignId },
+				select: { regionId: true },
+			});
+			const regionIds = campaignRegions.map((cr) => cr.regionId);
+
+			// 2. Fetch every grid cell for those regions
+			const allCells = await prisma.gridCell.findMany({
+				where: { regionId: { in: regionIds } },
 				select: {
 					id: true,
-					status: true,
-					resultsFound: true,
-					resultsNew: true,
+					row: true,
+					col: true,
 					bboxSouth: true,
 					bboxWest: true,
 					bboxNorth: true,
 					bboxEast: true,
 					geometry: true,
-					gridCell: { select: { row: true, col: true } },
 				},
 			});
-			return runs.map((run) => ({
-				id: run.id,
-				status: run.status,
-				resultsFound: run.resultsFound,
-				resultsNew: run.resultsNew,
-				bboxSouth: run.bboxSouth,
-				bboxWest: run.bboxWest,
-				bboxNorth: run.bboxNorth,
-				bboxEast: run.bboxEast,
-				geometry: run.geometry,
-				row: run.gridCell?.row ?? null,
-				col: run.gridCell?.col ?? null,
-			}));
+
+			// 3. Fetch all runs for this campaign so we can merge status per cell
+			const runs = await prisma.discoveryRun.findMany({
+				where: { campaignId: input.campaignId },
+				select: {
+					gridCellId: true,
+					status: true,
+					resultsFound: true,
+					resultsNew: true,
+				},
+			});
+
+			// Build a map of cellId → run (prefer COMPLETED > RUNNING > FAILED > PENDING)
+			const STATUS_PRIORITY: Record<string, number> = {
+				COMPLETED: 4,
+				RUNNING: 3,
+				FAILED: 2,
+				PENDING: 1,
+			};
+			const runByCellId = new Map<
+				string,
+				{ status: string; resultsFound: number; resultsNew: number }
+			>();
+			for (const run of runs) {
+				if (!run.gridCellId) {
+					continue;
+				}
+				const existing = runByCellId.get(run.gridCellId);
+				if (
+					!existing ||
+					(STATUS_PRIORITY[run.status] ?? 0) >
+						(STATUS_PRIORITY[existing.status] ?? 0)
+				) {
+					runByCellId.set(run.gridCellId, {
+						status: run.status,
+						resultsFound: run.resultsFound,
+						resultsNew: run.resultsNew,
+					});
+				}
+			}
+
+			// 4. Merge: every cell gets a status (PENDING if no run yet)
+			return allCells.map((cell) => {
+				const run = runByCellId.get(cell.id);
+				return {
+					id: cell.id,
+					row: cell.row,
+					col: cell.col,
+					bboxSouth: cell.bboxSouth,
+					bboxWest: cell.bboxWest,
+					bboxNorth: cell.bboxNorth,
+					bboxEast: cell.bboxEast,
+					geometry: cell.geometry,
+					status: run?.status ?? "PENDING",
+					resultsFound: run?.resultsFound ?? 0,
+					resultsNew: run?.resultsNew ?? 0,
+				};
+			});
 		}),
 
 	regions: protectedProcedure.handler(async () => {
@@ -278,28 +339,43 @@ export const campaignsRouter = {
 			});
 
 			const result = await Promise.all(
-				runs.map(async (run) => {
-					const avgScore = await prisma.company.aggregate({
-						where: {
-							campaignId: input.campaignId,
-							lat: { gte: run.bboxSouth!, lte: run.bboxNorth! },
-							lng: { gte: run.bboxWest!, lte: run.bboxEast! },
-							scoreTotal: { not: null },
-						},
-						_avg: { scoreTotal: true },
-						_count: true,
-					});
-					return {
-						row: run.gridCell?.row ?? null,
-						col: run.gridCell?.col ?? null,
-						bboxSouth: run.bboxSouth,
-						bboxWest: run.bboxWest,
-						bboxNorth: run.bboxNorth,
-						bboxEast: run.bboxEast,
-						avgScore: avgScore._avg.scoreTotal ?? 0,
-						count: avgScore._count,
-					};
-				})
+				runs
+					.filter(
+						(
+							run
+						): run is typeof run & {
+							bboxSouth: number;
+							bboxNorth: number;
+							bboxWest: number;
+							bboxEast: number;
+						} =>
+							run.bboxSouth !== null &&
+							run.bboxNorth !== null &&
+							run.bboxWest !== null &&
+							run.bboxEast !== null
+					)
+					.map(async (run) => {
+						const avgScore = await prisma.company.aggregate({
+							where: {
+								campaignId: input.campaignId,
+								lat: { gte: run.bboxSouth, lte: run.bboxNorth },
+								lng: { gte: run.bboxWest, lte: run.bboxEast },
+								scoreTotal: { not: null },
+							},
+							_avg: { scoreTotal: true },
+							_count: true,
+						});
+						return {
+							row: run.gridCell?.row ?? null,
+							col: run.gridCell?.col ?? null,
+							bboxSouth: run.bboxSouth,
+							bboxWest: run.bboxWest,
+							bboxNorth: run.bboxNorth,
+							bboxEast: run.bboxEast,
+							avgScore: avgScore._avg.scoreTotal ?? 0,
+							count: avgScore._count,
+						};
+					})
 			);
 			return result;
 		}),
