@@ -4,12 +4,17 @@ dotenv.config({ path: "../../apps/web/.env" });
 
 import { faker } from "@faker-js/faker";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "../../prisma/generated/client";
+import type { Feature, MultiPolygon, Polygon } from "@turf/helpers";
+import {
+	type CompanyStatus,
+	type DiscoveryRunStatus,
+	PrismaClient,
+} from "../../prisma/generated/client";
 import { cleanDatabase } from "./clean";
 
 type Prisma = InstanceType<typeof PrismaClient>;
 
-const COMPANY_STATUSES = [
+const COMPANY_STATUSES: CompanyStatus[] = [
 	"DISCOVERED",
 	"FILTERED",
 	"ICP_QUALIFIED",
@@ -17,14 +22,14 @@ const COMPANY_STATUSES = [
 	"ICP_DISQUALIFIED",
 	"CONTACT_ACQUIRED",
 	"READY",
-] as const;
+];
 
-const DISCOVERY_RUN_STATUSES = [
+const DISCOVERY_RUN_STATUSES: DiscoveryRunStatus[] = [
 	"PENDING",
 	"RUNNING",
 	"COMPLETED",
 	"FAILED",
-] as const;
+];
 
 const INDUSTRIES = [
 	"Construction",
@@ -113,8 +118,9 @@ const REGIONS_DATA = [
 	},
 ];
 
-async function seedDevData(prisma: Prisma) {
-	// 1. Users
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+async function seedUsersAndCountries(prisma: Prisma) {
 	await prisma.user.createMany({
 		data: [
 			{
@@ -136,7 +142,6 @@ async function seedDevData(prisma: Prisma) {
 	});
 	console.log("  ✓ 2 users created");
 
-	// 2. Countries
 	const countries = await Promise.all([
 		prisma.country.upsert({
 			where: { code: "US" },
@@ -144,26 +149,33 @@ async function seedDevData(prisma: Prisma) {
 			create: { code: "US", name: "United States" },
 		}),
 	]);
-	const countryMap = Object.fromEntries(countries.map((c) => [c.code, c.id]));
 	console.log("  ✓ 1 country created (US)");
+	return Object.fromEntries(countries.map((c) => [c.code, c.id]));
+}
 
-	// Load state polygons
-	const statesGeoJson = await import("../us-states.json");
-	const statesData = (statesGeoJson.default ?? statesGeoJson) as { features: { properties: { name: string }; geometry: unknown }[] };
-
-	// 3. Regions (with state polygon stored)
+async function seedRegions(
+	prisma: Prisma,
+	countryMap: Record<string, string>,
+	statesData: {
+		features: { properties: { name: string }; geometry: unknown }[];
+	}
+) {
 	const regions = await Promise.all(
 		REGIONS_DATA.map((r) => {
-			const stateFeature = statesData.features.find((f) => f.properties.name === r.name);
+			const countryId = countryMap[r.country];
+			if (!countryId) {
+				throw new Error(`Country not found: ${r.country}`);
+			}
+			const stateFeature = statesData.features.find(
+				(f) => f.properties.name === r.name
+			);
 			return prisma.region.upsert({
-				where: {
-					countryId_code: { countryId: countryMap[r.country]!, code: r.code },
-				},
+				where: { countryId_code: { countryId, code: r.code } },
 				update: {},
 				create: {
 					code: r.code,
 					name: r.name,
-					countryId: countryMap[r.country]!,
+					countryId,
 					cellSize: r.cellSize,
 					bboxSouth: r.bbox.south,
 					bboxWest: r.bbox.west,
@@ -176,35 +188,73 @@ async function seedDevData(prisma: Prisma) {
 		})
 	);
 	console.log(`  ✓ ${regions.length} regions created`);
+	return regions;
+}
 
-	// 4. Grid cells (polygon-clipped to state boundaries using Turf.js)
-	
-	
+async function seedGridCells(
+	prisma: Prisma,
+	regions: Awaited<ReturnType<typeof seedRegions>>,
+	statesData: {
+		features: { properties: { name: string }; geometry: unknown }[];
+	}
+) {
 	const { generateClippedCells } = await import("../geo-utils");
-
 	let totalCells = 0;
-	for (const region of regions) {
-		const rd = REGIONS_DATA.find((r) => r.code === region.code)!;
-		const stateFeature = statesData.features.find((f) => f.properties.name === rd.name);
-		if (!stateFeature) { console.log(`  ⚠ No polygon found for ${rd.name}`); continue; }
 
-		const bbox: [number, number, number, number] = [rd.bbox.west, rd.bbox.south, rd.bbox.east, rd.bbox.north];
-		const cells = generateClippedCells(stateFeature as any, bbox, rd.cellSize);
+	for (const region of regions) {
+		const rd = REGIONS_DATA.find((r) => r.code === region.code);
+		if (!rd) {
+			console.log(`  ⚠ No REGIONS_DATA entry for ${region.code}`);
+			continue;
+		}
+		const stateFeature = statesData.features.find(
+			(f) => f.properties.name === rd.name
+		);
+		if (!stateFeature) {
+			console.log(`  ⚠ No polygon found for ${rd.name}`);
+			continue;
+		}
+
+		const bbox: [number, number, number, number] = [
+			rd.bbox.west,
+			rd.bbox.south,
+			rd.bbox.east,
+			rd.bbox.north,
+		];
+		const cells = generateClippedCells(
+			stateFeature as Feature<Polygon | MultiPolygon>,
+			bbox,
+			rd.cellSize
+		);
 
 		await prisma.gridCell.createMany({
 			data: cells.map((c) => ({
-				regionId: region.id, row: c.row, col: c.col,
-				bboxSouth: c.bboxSouth, bboxWest: c.bboxWest, bboxNorth: c.bboxNorth, bboxEast: c.bboxEast,
+				regionId: region.id,
+				row: c.row,
+				col: c.col,
+				bboxSouth: c.bboxSouth,
+				bboxWest: c.bboxWest,
+				bboxNorth: c.bboxNorth,
+				bboxEast: c.bboxEast,
 				geometry: c.geometry,
 			})),
 			skipDuplicates: true,
 		});
-		await prisma.region.update({ where: { id: region.id }, data: { cellsGenerated: true } });
+		await prisma.region.update({
+			where: { id: region.id },
+			data: { cellsGenerated: true },
+		});
 		totalCells += cells.length;
 	}
-	console.log(`  ✓ ${totalCells} grid cells created (polygon-clipped, zero ocean/overlap)`);
+	console.log(
+		`  ✓ ${totalCells} grid cells created (polygon-clipped, zero ocean/overlap)`
+	);
+}
 
-	// 5. Campaigns
+async function seedCampaigns(
+	prisma: Prisma,
+	regions: Awaited<ReturnType<typeof seedRegions>>
+) {
 	const campaignData = [
 		{
 			name: "HVAC Contractors Texas",
@@ -218,21 +268,54 @@ async function seedDevData(prisma: Prisma) {
 			regionCode: "FL",
 		},
 	];
-	const campaigns = [];
+
+	const campaigns: Array<{ id: string; regionId: string; name: string }> = [];
 	for (const cd of campaignData) {
 		const campaign = await prisma.campaign.create({
 			data: { name: cd.name, searchTerm: cd.searchTerm, source: "google_maps" },
 		});
-		const region = regions.find((r) => r.code === cd.regionCode)!;
+		const region = regions.find((r) => r.code === cd.regionCode);
+		if (!region) {
+			throw new Error(`Region not found: ${cd.regionCode}`);
+		}
 		await prisma.campaignRegion.create({
 			data: { campaignId: campaign.id, regionId: region.id },
 		});
-		campaigns.push({ ...campaign, regionId: region.id });
+		campaigns.push({
+			id: campaign.id,
+			name: campaign.name,
+			regionId: region.id,
+		});
 	}
 	console.log("  ✓ 3 campaigns created");
+	return campaigns;
+}
 
-	// 6. Companies (~500)
-	const companyRecords = [];
+async function seedCompanies(
+	prisma: Prisma,
+	campaigns: Array<{ id: string; regionId: string; name: string }>
+) {
+	const companyRecords: Array<{
+		name: string;
+		domain: string;
+		phone: string;
+		address: string;
+		city: string;
+		state: string;
+		country: string;
+		category: string;
+		industry: string;
+		employeeCount: number;
+		revenueMm: number;
+		scoreTotal: number | null;
+		status: CompanyStatus;
+		source: string;
+		campaignId: string;
+		rating: number;
+		reviewCount: number;
+		website: string;
+	}> = [];
+
 	for (let i = 0; i < 500; i++) {
 		const campaign = faker.helpers.arrayElement(campaigns);
 		const status = faker.helpers.arrayElement(COMPANY_STATUSES);
@@ -257,7 +340,7 @@ async function seedDevData(prisma: Prisma) {
 			employeeCount: faker.number.int({ min: 5, max: 10_000 }),
 			revenueMm: faker.number.float({ min: 0.5, max: 500, fractionDigits: 1 }),
 			scoreTotal: hasScore ? faker.number.int({ min: 10, max: 100 }) : null,
-			status: status as any,
+			status,
 			source: "google_maps",
 			campaignId: campaign.id,
 			rating: faker.number.float({ min: 1, max: 5, fractionDigits: 1 }),
@@ -270,13 +353,28 @@ async function seedDevData(prisma: Prisma) {
 		skipDuplicates: true,
 	});
 	console.log(`  ✓ ${companyRecords.length} companies created`);
+}
 
-	// 7. Contacts (~200) — linked to CONTACT_ACQUIRED or READY companies
+async function seedContacts(prisma: Prisma) {
 	const contactCompanies = await prisma.company.findMany({
 		where: { status: { in: ["CONTACT_ACQUIRED", "READY"] } },
 		select: { id: true, domain: true },
 	});
-	const contactRecords = [];
+
+	const contactRecords: Array<{
+		companyId: string;
+		firstName: string;
+		lastName: string;
+		email: string;
+		phone: string;
+		title: string;
+		seniority: string;
+		linkedin: string;
+		source: string;
+		revealed: boolean;
+		verified: boolean;
+	}> = [];
+
 	const targetCount = Math.min(200, contactCompanies.length * 3);
 	for (let i = 0; i < targetCount; i++) {
 		const company = faker.helpers.arrayElement(contactCompanies);
@@ -305,12 +403,42 @@ async function seedDevData(prisma: Prisma) {
 		skipDuplicates: true,
 	});
 	console.log(`  ✓ ${contactRecords.length} contacts created`);
+}
 
-	// 8. Discovery runs (~50)
+async function seedDiscoveryRuns(
+	prisma: Prisma,
+	campaigns: Array<{ id: string; regionId: string }>
+) {
+	// Fetch bbox + geometry so we can snapshot them onto each DiscoveryRun
+	// (mirrors what the real worker does; the map reads bbox/geometry from the run, not the cell)
 	const allCells = await prisma.gridCell.findMany({
-		select: { id: true, regionId: true },
+		select: {
+			id: true,
+			regionId: true,
+			bboxSouth: true,
+			bboxWest: true,
+			bboxNorth: true,
+			bboxEast: true,
+			geometry: true,
+		},
 	});
-	const runRecords = [];
+
+	const runRecords: Array<{
+		campaignId: string;
+		gridCellId: string;
+		bboxSouth: number;
+		bboxWest: number;
+		bboxNorth: number;
+		bboxEast: number;
+		geometry: unknown;
+		status: DiscoveryRunStatus;
+		resultsFound: number;
+		resultsNew: number;
+		startedAt: Date | null;
+		completedAt: Date | null;
+		error: string | null;
+	}> = [];
+
 	for (let i = 0; i < 50; i++) {
 		const campaign = faker.helpers.arrayElement(campaigns);
 		const regionCells = allCells.filter(
@@ -319,12 +447,19 @@ async function seedDevData(prisma: Prisma) {
 		if (!regionCells.length) {
 			continue;
 		}
+
 		const cell = faker.helpers.arrayElement(regionCells);
 		const status = faker.helpers.arrayElement(DISCOVERY_RUN_STATUSES);
+		// Snapshot bbox + geometry from the cell — the map renders these directly from DiscoveryRun
 		runRecords.push({
 			campaignId: campaign.id,
 			gridCellId: cell.id,
-			status: status as any,
+			bboxSouth: cell.bboxSouth,
+			bboxWest: cell.bboxWest,
+			bboxNorth: cell.bboxNorth,
+			bboxEast: cell.bboxEast,
+			geometry: cell.geometry,
+			status,
 			resultsFound:
 				status === "COMPLETED" ? faker.number.int({ min: 50, max: 1200 }) : 0,
 			resultsNew:
@@ -340,8 +475,9 @@ async function seedDevData(prisma: Prisma) {
 		skipDuplicates: true,
 	});
 	console.log(`  ✓ ${runRecords.length} discovery runs created`);
+}
 
-	// 9. Settings
+async function seedSettings(prisma: Prisma) {
 	const settings = [
 		{
 			category: "icp",
@@ -418,6 +554,7 @@ async function seedDevData(prisma: Prisma) {
 			label: "Sonar API daily limit",
 		},
 	];
+
 	for (const s of settings) {
 		await prisma.setting.upsert({
 			where: { key: s.key },
@@ -431,8 +568,9 @@ async function seedDevData(prisma: Prisma) {
 		});
 	}
 	console.log("  ✓ Settings seeded");
+}
 
-	// 10. Metrics
+async function seedMetrics(prisma: Prisma) {
 	const today = new Date();
 	today.setHours(0, 0, 0, 0);
 	await prisma.metric.createMany({
@@ -446,9 +584,32 @@ async function seedDevData(prisma: Prisma) {
 	console.log("  ✓ Metrics seeded");
 }
 
+// ─── orchestrator ─────────────────────────────────────────────────────────────
+
+async function seedDevData(prisma: Prisma) {
+	const statesGeoJson = await import("../us-states.json");
+	const statesData = (statesGeoJson.default ?? statesGeoJson) as {
+		features: { properties: { name: string }; geometry: unknown }[];
+	};
+
+	const countryMap = await seedUsersAndCountries(prisma);
+	const regions = await seedRegions(prisma, countryMap, statesData);
+	await seedGridCells(prisma, regions, statesData);
+	const campaigns = await seedCampaigns(prisma, regions);
+	await seedCompanies(prisma, campaigns);
+	await seedContacts(prisma);
+	await seedDiscoveryRuns(prisma, campaigns);
+	await seedSettings(prisma);
+	await seedMetrics(prisma);
+}
+
 async function main() {
 	console.log("🌱 Dev seed starting…");
-	const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
+	const connectionString = process.env.DATABASE_URL;
+	if (!connectionString) {
+		throw new Error("DATABASE_URL env var is not set");
+	}
+	const adapter = new PrismaPg({ connectionString });
 	const prisma = new PrismaClient({ adapter });
 
 	try {
