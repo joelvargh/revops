@@ -59,63 +59,63 @@ const TITLES = [
 ];
 
 const REGIONS_DATA = [
-	// Full state bboxes - polygon clipping removes ocean/cross-border cells
+	// Bboxes derived from actual GADM level-1 extents, rounded outward to 0.25°
 	{
 		code: "TX",
 		name: "Texas",
 		country: "US",
 		cellSize: 0.25,
-		bbox: { south: 25.84, west: -106.65, north: 36.5, east: -93.51 },
+		bbox: { south: 25.75, west: -106.75, north: 36.75, east: -93.5 },
 	},
 	{
 		code: "CA",
 		name: "California",
 		country: "US",
 		cellSize: 0.25,
-		bbox: { south: 32.53, west: -124.48, north: 42.01, east: -114.13 },
+		bbox: { south: 32.5, west: -124.5, north: 42.25, east: -114.0 },
 	},
 	{
 		code: "FL",
 		name: "Florida",
 		country: "US",
 		cellSize: 0.25,
-		bbox: { south: 24.52, west: -87.63, north: 31.0, east: -80.03 },
+		bbox: { south: 24.5, west: -87.75, north: 31.25, east: -79.5 },
 	},
-	{
-		code: "NY",
-		name: "New York",
-		country: "US",
-		cellSize: 0.25,
-		bbox: { south: 40.5, west: -79.76, north: 45.01, east: -71.86 },
-	},
-	{
-		code: "IL",
-		name: "Illinois",
-		country: "US",
-		cellSize: 0.25,
-		bbox: { south: 36.97, west: -91.51, north: 42.51, east: -87.02 },
-	},
-	{
-		code: "OH",
-		name: "Ohio",
-		country: "US",
-		cellSize: 0.25,
-		bbox: { south: 38.4, west: -84.82, north: 42.32, east: -80.52 },
-	},
-	{
-		code: "PA",
-		name: "Pennsylvania",
-		country: "US",
-		cellSize: 0.25,
-		bbox: { south: 39.72, west: -80.52, north: 42.27, east: -74.69 },
-	},
-	{
-		code: "GA",
-		name: "Georgia",
-		country: "US",
-		cellSize: 0.25,
-		bbox: { south: 30.36, west: -85.61, north: 35.0, east: -80.84 },
-	},
+	// {
+	// 	code: "NY",
+	// 	name: "New York",
+	// 	country: "US",
+	// 	cellSize: 0.25,
+	// 	bbox: { south: 40.25, west: -80.0, north: 45.25, east: -71.75 },
+	// },
+	// {
+	// 	code: "IL",
+	// 	name: "Illinois",
+	// 	country: "US",
+	// 	cellSize: 0.25,
+	// 	bbox: { south: 36.75, west: -91.75, north: 42.75, east: -87.0 },
+	// },
+	// {
+	// 	code: "OH",
+	// 	name: "Ohio",
+	// 	country: "US",
+	// 	cellSize: 0.25,
+	// 	bbox: { south: 38.25, west: -85.0, north: 43.0, east: -78.75 },
+	// },
+	// {
+	// 	code: "PA",
+	// 	name: "Pennsylvania",
+	// 	country: "US",
+	// 	cellSize: 0.25,
+	// 	bbox: { south: 39.5, west: -80.75, north: 42.5, east: -74.5 },
+	// },
+	// {
+	// 	code: "GA",
+	// 	name: "Georgia",
+	// 	country: "US",
+	// 	cellSize: 0.25,
+	// 	bbox: { south: 30.25, west: -85.75, north: 35.25, east: -80.75 },
+	// },
 ];
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

@@ -8,13 +8,13 @@ import { Toaster } from "@/components/ui/sonner";
 import { createQueryClient } from "@/lib/query/client";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
-  const [queryClient] = useState(() => createQueryClient());
+	const [queryClient] = useState(() => createQueryClient());
 
-  return (
-    <QueryClientProvider client={queryClient}>
-      {children}
-      <ReactQueryDevtools />
-      <Toaster richColors />
-    </QueryClientProvider>
-  );
+	return (
+		<QueryClientProvider client={queryClient}>
+			{children}
+			<ReactQueryDevtools />
+			<Toaster richColors />
+		</QueryClientProvider>
+	);
 }

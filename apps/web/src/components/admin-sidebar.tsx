@@ -95,7 +95,7 @@ export function AdminSidebar(props: React.ComponentProps<typeof Sidebar>) {
 										className="h-10 rounded-xl data-[active=true]:bg-sidebar-primary data-[active=true]:text-sidebar-primary-foreground"
 										isActive={
 											pathname === item.href ||
-											pathname.startsWith(item.href + "/")
+											pathname.startsWith(`${item.href}/`)
 										}
 										tooltip={item.label}
 									>

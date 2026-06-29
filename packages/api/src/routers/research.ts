@@ -3,26 +3,30 @@ import { z } from "zod";
 import { protectedProcedure } from "../index";
 
 export const researchRouter = {
-	queue: protectedProcedure.handler(async () => {
-		const { createPrismaClient } = await import("@revops/db");
-		const prisma = createPrismaClient();
-		return prisma.company.findMany({
-			where: { status: "RESEARCH_PENDING" },
-			orderBy: { createdAt: "desc" },
-			take: 30,
-			select: {
-				id: true,
-				name: true,
-				city: true,
-				state: true,
-				category: true,
-				website: true,
-				domain: true,
-				phone: true,
-				discoveredAt: true,
-			},
-		});
-	}),
+	queue: protectedProcedure
+		.input(
+			z
+				.object({ limit: z.number().int().min(1).max(100).default(30) })
+				.optional()
+		)
+		.handler(async ({ context, input }) =>
+			context.prisma.company.findMany({
+				where: { status: "RESEARCH_PENDING" },
+				orderBy: { createdAt: "desc" },
+				take: input?.limit ?? 30,
+				select: {
+					id: true,
+					name: true,
+					city: true,
+					state: true,
+					category: true,
+					website: true,
+					domain: true,
+					phone: true,
+					discoveredAt: true,
+				},
+			})
+		),
 
 	submit: protectedProcedure
 		.input(
@@ -33,10 +37,8 @@ export const researchRouter = {
 				industry: z.string().nullable(),
 			})
 		)
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			return prisma.company.update({
+		.handler(async ({ context, input }) =>
+			context.prisma.company.update({
 				where: { id: input.companyId },
 				data: {
 					employeeCount: input.employees,
@@ -49,25 +51,21 @@ export const researchRouter = {
 						data_found: true,
 						source: "manual",
 					},
-					status: "FILTERED" as const, // Goes back to scoring pipeline (WF-03c will pick it up)
+					status: "FILTERED" as const,
 				},
-			});
-		}),
+			})
+		),
 
 	skip: protectedProcedure
 		.input(z.object({ companyId: z.string() }))
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			return prisma.company.update({
+		.handler(async ({ context, input }) =>
+			context.prisma.company.update({
 				where: { id: input.companyId },
 				data: { status: "ICP_DISQUALIFIED" },
-			});
-		}),
+			})
+		),
 
-	count: protectedProcedure.handler(async () => {
-		const { createPrismaClient } = await import("@revops/db");
-		const prisma = createPrismaClient();
-		return prisma.company.count({ where: { status: "RESEARCH_PENDING" } });
-	}),
+	count: protectedProcedure.handler(async ({ context }) =>
+		context.prisma.company.count({ where: { status: "RESEARCH_PENDING" } })
+	),
 };

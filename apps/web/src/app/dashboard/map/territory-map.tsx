@@ -247,20 +247,15 @@ export function TerritoryMap() {
 						id="state-boundaries"
 						type="geojson"
 					>
-						{/* <Layer
+						<Layer
 							id="state-borders"
 							paint={{
-								"line-color": "#334155",
-								"line-width": 1.5,
-								"line-opacity": 0.6,
+								"line-color": "#475569",
+								"line-width": 1,
+								"line-opacity": 0.4,
 							}}
 							type="line"
-						/> */}
-						{/* <Layer
-							id="state-fill"
-							paint={{ "fill-color": "#64748b", "fill-opacity": 0.03 }}
-							type="fill"
-						/> */}
+						/>
 					</Source>
 
 					{/* Hover popup */}

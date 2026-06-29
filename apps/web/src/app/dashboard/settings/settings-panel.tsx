@@ -60,8 +60,14 @@ export function SettingsPanel() {
 			key: string;
 			value: string | number | boolean | string[] | Record<string, unknown>;
 		}) => client.settings.update(input),
-		onSuccess: () => {
+		onSuccess: (_, variables) => {
 			queryClient.invalidateQueries({ queryKey: orpc.settings.key() });
+			// Only clear the edit after confirmed success
+			setEdits((prev) => {
+				const n = { ...prev };
+				delete n[variables.key];
+				return n;
+			});
 			toast.success("Setting updated");
 		},
 		onError: () => toast.error("Failed to save"),
@@ -83,15 +89,13 @@ export function SettingsPanel() {
 			}
 		}
 		updateMutation.mutate({ key, value: parsed });
-		setEdits((prev) => {
-			const n = { ...prev };
-			delete n[key];
-			return n;
-		});
 	}
 
 	if (isLoading) {
 		return <p className="text-muted-foreground">Loading settings...</p>;
+	}
+	if (!settings) {
+		return <p className="text-destructive">Failed to load settings.</p>;
 	}
 
 	const grouped = CATEGORIES.map((cat) => ({

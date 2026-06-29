@@ -9,18 +9,18 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { client } from "@/lib/orpc";
 
-type Lead = {
-	id: string;
-	name: string;
-	industry: string | null;
+interface Lead {
+	city: string | null;
+	country: string | null;
 	employeeCount: number | null;
+	id: string;
+	industry: string | null;
+	name: string;
 	revenueMm: number | null;
 	scoreTotal: number | null;
-	status: string;
-	city: string | null;
 	state: string | null;
-	country: string | null;
-};
+	status: string;
+}
 
 const columns: ColumnDef<Lead, unknown>[] = [
 	{ accessorKey: "name", header: "Company" },

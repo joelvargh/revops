@@ -13,23 +13,25 @@ const jsonValue = z.union([
 export const settingsRouter = {
 	list: protectedProcedure
 		.input(z.object({ category: z.string().optional() }).optional())
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			return prisma.setting.findMany({
+		.handler(async ({ context, input }) =>
+			context.prisma.setting.findMany({
 				where: input?.category ? { category: input.category } : undefined,
 				orderBy: [{ category: "asc" }, { key: "asc" }],
-			});
-		}),
+			})
+		),
 
 	update: protectedProcedure
 		.input(z.object({ key: z.string(), value: jsonValue }))
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			return prisma.setting.update({
+		.handler(({ context, input }) => {
+			// upsert so it works even if key doesn't exist yet (avoids P2025)
+			return context.prisma.setting.upsert({
 				where: { key: input.key },
-				data: { value: input.value as object },
+				update: { value: input.value as never },
+				create: {
+					key: input.key,
+					category: "misc",
+					value: input.value as never,
+				},
 			});
 		}),
 
@@ -42,18 +44,16 @@ export const settingsRouter = {
 				label: z.string().optional(),
 			})
 		)
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			return prisma.setting.upsert({
+		.handler(async ({ context, input }) =>
+			context.prisma.setting.upsert({
 				where: { key: input.key },
-				update: { value: input.value as object, label: input.label },
+				update: { value: input.value as never, label: input.label },
 				create: {
 					category: input.category,
 					key: input.key,
-					value: input.value as object,
+					value: input.value as never,
 					label: input.label,
 				},
-			});
-		}),
+			})
+		),
 };

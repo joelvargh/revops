@@ -17,20 +17,15 @@ import {
 } from "@/components/ui/select";
 import { orpc } from "@/lib/orpc";
 
-const STATES = ["TX", "CA", "FL", "NY", "IL"];
-const INDUSTRIES = [
-	"Construction",
-	"Healthcare",
-	"Manufacturing",
-	"Oil & Gas",
-	"Energy",
-];
-
 export function LeadsTable() {
 	const [search, setSearch] = useState("");
 	const [state, setState] = useState<string>("");
 	const [industry, setIndustry] = useState<string>("");
 	const [page, setPage] = useState(1);
+
+	const { data: filterOptions } = useQuery(
+		orpc.leads.filterOptions.queryOptions({})
+	);
 
 	const { data, isLoading } = useQuery(
 		orpc.leads.list.queryOptions({
@@ -91,7 +86,7 @@ export function LeadsTable() {
 					</SelectTrigger>
 					<SelectContent>
 						<SelectItem value="all">All states</SelectItem>
-						{STATES.map((s) => (
+						{(filterOptions?.states ?? []).map((s) => (
 							<SelectItem key={s} value={s}>
 								{s}
 							</SelectItem>
@@ -110,7 +105,7 @@ export function LeadsTable() {
 					</SelectTrigger>
 					<SelectContent>
 						<SelectItem value="all">All industries</SelectItem>
-						{INDUSTRIES.map((i) => (
+						{(filterOptions?.industries ?? []).map((i) => (
 							<SelectItem key={i} value={i}>
 								{i}
 							</SelectItem>

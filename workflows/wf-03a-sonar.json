@@ -247,6 +247,17 @@
           }
         ]
       ]
+    },
+    "Store Sonar Data": {
+      "main": [
+        [
+          {
+            "node": "Mark ENRICHMENT_PENDING",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {

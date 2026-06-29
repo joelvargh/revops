@@ -1,6 +1,9 @@
+import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
 import { adminProcedure, protectedProcedure } from "../index";
+
+const ALLOWED_SORT_FIELDS = new Set(["name", "email", "role", "createdAt"]);
 
 export const usersRouter = {
 	list: protectedProcedure
@@ -16,11 +19,8 @@ export const usersRouter = {
 					.optional(),
 			})
 		)
-		.handler(async ({ input }) => {
+		.handler(async ({ context, input }) => {
 			const { page, perPage, sort, filters } = input;
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-
 			const where: Record<string, unknown> = {};
 			if (filters) {
 				for (const f of filters) {
@@ -35,13 +35,13 @@ export const usersRouter = {
 					}
 				}
 			}
-
 			const orderBy = sort?.length
-				? sort.map((s) => ({ [s.id]: s.desc ? "desc" : "asc" }))
+				? sort
+						.filter((s) => ALLOWED_SORT_FIELDS.has(s.id))
+						.map((s) => ({ [s.id]: s.desc ? "desc" : "asc" }))
 				: [{ createdAt: "desc" as const }];
-
 			const [users, total] = await Promise.all([
-				prisma.user.findMany({
+				context.prisma.user.findMany({
 					where,
 					orderBy,
 					skip: (page - 1) * perPage,
@@ -56,9 +56,8 @@ export const usersRouter = {
 						createdAt: true,
 					},
 				}),
-				prisma.user.count({ where }),
+				context.prisma.user.count({ where }),
 			]);
-
 			return { users, total, pageCount: Math.ceil(total / perPage) };
 		}),
 
@@ -70,31 +69,28 @@ export const usersRouter = {
 				role: z.enum(["admin", "user"]).default("user"),
 			})
 		)
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			const existing = await prisma.user.findUnique({
+		.handler(async ({ context, input }) => {
+			const existing = await context.prisma.user.findUnique({
 				where: { email: input.email },
 			});
 			if (existing) {
-				throw new Error("A user with this email already exists");
+				throw new ORPCError("CONFLICT", {
+					message: "A user with this email already exists",
+				});
 			}
-			const user = await prisma.user.create({
+			return context.prisma.user.create({
 				data: { id: crypto.randomUUID(), ...input, emailVerified: true },
 			});
-			return user;
 		}),
 
 	updateRole: adminProcedure
 		.input(z.object({ userId: z.string(), role: z.enum(["admin", "user"]) }))
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			return prisma.user.update({
+		.handler(async ({ context, input }) =>
+			context.prisma.user.update({
 				where: { id: input.userId },
 				data: { role: input.role },
-			});
-		}),
+			})
+		),
 
 	ban: adminProcedure
 		.input(
@@ -104,24 +100,20 @@ export const usersRouter = {
 				reason: z.string().optional(),
 			})
 		)
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			return prisma.user.update({
+		.handler(async ({ context, input }) =>
+			context.prisma.user.update({
 				where: { id: input.userId },
 				data: {
 					banned: input.banned,
 					banReason: input.banned ? input.reason : null,
 				},
-			});
-		}),
+			})
+		),
 
 	delete: adminProcedure
 		.input(z.object({ userId: z.string() }))
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			await prisma.user.delete({ where: { id: input.userId } });
+		.handler(async ({ context, input }) => {
+			await context.prisma.user.delete({ where: { id: input.userId } });
 			return { success: true };
 		}),
 };

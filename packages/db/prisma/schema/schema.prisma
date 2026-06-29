@@ -107,7 +107,7 @@ model Region {
   name      String // Texas, London, Ontario
   code      String // TX, LDN, ON
   countryId String
-  cellSize  Float  @default(0.5) // degrees, used when generating cells
+  cellSize  Float  @default(0.25) // degrees, used when generating cells
 
   bboxSouth Float
   bboxWest  Float
@@ -119,7 +119,7 @@ model Region {
 
   cellsGenerated Boolean @default(false)
 
-  country   Country          @relation(fields: [countryId], references: [id])
+  country   Country          @relation(fields: [countryId], references: [id], onDelete: Cascade)
   cells     GridCell[]
   campaigns CampaignRegion[]
 
@@ -141,10 +141,11 @@ model GridCell {
   /// [GeoJsonPolygon]
   geometry  Json?  // GeoJSON Polygon/MultiPolygon for Apify customGeolocation
 
-  region        Region         @relation(fields: [regionId], references: [id])
+  region        Region         @relation(fields: [regionId], references: [id], onDelete: Cascade)
   discoveryRuns DiscoveryRun[]
 
   @@unique([regionId, row, col])
+  @@index([regionId])
   @@map("grid_cell")
 }
 
@@ -178,10 +179,12 @@ model CampaignRegion {
   campaignId String
   regionId   String
 
-  campaign Campaign @relation(fields: [campaignId], references: [id])
-  region   Region   @relation(fields: [regionId], references: [id])
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  region   Region   @relation(fields: [regionId], references: [id], onDelete: Cascade)
 
   @@unique([campaignId, regionId])
+  @@index([campaignId])
+  @@index([regionId])
   @@map("campaign_region")
 }
 
@@ -207,11 +210,13 @@ model DiscoveryRun {
   completedAt  DateTime?
   createdAt    DateTime           @default(now())
 
-  campaign Campaign  @relation(fields: [campaignId], references: [id])
+  campaign Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   gridCell GridCell? @relation(fields: [gridCellId], references: [id], onDelete: SetNull)
 
   @@unique([campaignId, gridCellId])
   @@index([status])
+  @@index([campaignId])
+  @@index([gridCellId])
   @@map("discovery_run")
 }
 

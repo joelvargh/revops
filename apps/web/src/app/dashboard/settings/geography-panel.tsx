@@ -9,7 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { client, orpc } from "@/lib/orpc";
 
 export function GeographyPanel() {
@@ -161,8 +167,13 @@ function CountryCard({
 	});
 
 	const generateCells = useMutation({
-		mutationFn: ({ regionId, cellSize }: { regionId: string; cellSize?: number }) =>
-			client.geography.regions.generateCells({ regionId, cellSize }),
+		mutationFn: ({
+			regionId,
+			cellSize,
+		}: {
+			regionId: string;
+			cellSize?: number;
+		}) => client.geography.regions.generateCells({ regionId, cellSize }),
 		onSuccess: (data) => {
 			queryClient.invalidateQueries({ queryKey: orpc.geography.key() });
 			toast.success(`Generated ${data.cellCount} cells`);
@@ -170,7 +181,9 @@ function CountryCard({
 		onError: () => toast.error("Failed to generate cells"),
 	});
 
-	const [regenCellSize, setRegenCellSize] = useState<Record<string, string>>({});
+	const [regenCellSize, setRegenCellSize] = useState<Record<string, string>>(
+		{}
+	);
 
 	return (
 		<Card>
@@ -210,8 +223,10 @@ function CountryCard({
 							{r.cellsGenerated ? (
 								<>
 									<Select
+										onValueChange={(v) =>
+											setRegenCellSize({ ...regenCellSize, [r.id]: v })
+										}
 										value={regenCellSize[r.id] || String(r.cellSize)}
-										onValueChange={(v) => setRegenCellSize({ ...regenCellSize, [r.id]: v })}
 									>
 										<SelectTrigger className="h-8 w-20 text-xs">
 											<SelectValue />
@@ -225,7 +240,12 @@ function CountryCard({
 									</Select>
 									<Button
 										disabled={generateCells.isPending}
-										onClick={() => generateCells.mutate({ regionId: r.id, cellSize: Number(regenCellSize[r.id] || r.cellSize) })}
+										onClick={() =>
+											generateCells.mutate({
+												regionId: r.id,
+												cellSize: Number(regenCellSize[r.id] || r.cellSize),
+											})
+										}
 										size="sm"
 										variant="outline"
 									>

@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ExternalLink, X } from "lucide-react";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,35 +18,62 @@ interface ScoreBreakdown {
 
 export function ReviewQueue() {
 	const queryClient = useQueryClient();
-	const { data: companies, isLoading } = useQuery(
-		orpc.review.queue.queryOptions({})
-	);
+	const {
+		data: companies,
+		isLoading,
+		isError,
+	} = useQuery(orpc.review.queue.queryOptions({}));
 	const { data: count } = useQuery(orpc.review.count.queryOptions({}));
+
+	// Track pending per company to avoid disabling all cards at once
+	const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
 
 	const approveMutation = useMutation({
 		mutationFn: (companyId: string) => client.review.approve({ companyId }),
+		onMutate: (id) => setPendingIds((s) => new Set(s).add(id)),
+		onSettled: (_, __, id) =>
+			setPendingIds((s) => {
+				const n = new Set(s);
+				n.delete(id);
+				return n;
+			}),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: orpc.review.key() }),
 	});
 
 	const rejectMutation = useMutation({
 		mutationFn: (companyId: string) => client.review.reject({ companyId }),
+		onMutate: (id) => setPendingIds((s) => new Set(s).add(id)),
+		onSettled: (_, __, id) =>
+			setPendingIds((s) => {
+				const n = new Set(s);
+				n.delete(id);
+				return n;
+			}),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: orpc.review.key() }),
 	});
 
-	// Keyboard shortcuts
+	// Keyboard shortcuts — only fire when no input/textarea is focused
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent) => {
-			if (!companies?.length) {
+			const tag = (e.target as HTMLElement).tagName;
+			if (
+				tag === "INPUT" ||
+				tag === "TEXTAREA" ||
+				(e.target as HTMLElement).isContentEditable
+			) {
+				return;
+			}
+			if (!companies?.length || e.metaKey || e.ctrlKey) {
 				return;
 			}
 			const first = companies[0];
-			if (e.key === "a" && !e.metaKey && !e.ctrlKey) {
+			if (e.key === "a") {
 				e.preventDefault();
 				approveMutation.mutate(first.id);
 			}
-			if (e.key === "r" && !e.metaKey && !e.ctrlKey) {
+			if (e.key === "r") {
 				e.preventDefault();
 				rejectMutation.mutate(first.id);
 			}
@@ -61,6 +88,9 @@ export function ReviewQueue() {
 
 	if (isLoading) {
 		return <p className="text-muted-foreground">Loading queue...</p>;
+	}
+	if (isError) {
+		return <p className="text-destructive">Failed to load review queue.</p>;
 	}
 
 	return (
@@ -77,13 +107,14 @@ export function ReviewQueue() {
 
 			{companies?.length === 0 && (
 				<p className="py-12 text-center text-muted-foreground">
-					🎉 Review queue is empty. All caught up!
+					🎉 Review queue is empty!
 				</p>
 			)}
 
 			<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
 				{companies?.map((company, i) => {
 					const breakdown = company.scoreBreakdown as ScoreBreakdown | null;
+					const isPending = pendingIds.has(company.id);
 					return (
 						<Card
 							className={i === 0 ? "ring-2 ring-primary" : ""}
@@ -99,11 +130,11 @@ export function ReviewQueue() {
 									</Badge>
 								</div>
 								<p className="text-muted-foreground text-sm">
-									{company.city}, {company.state} • {company.category}
+									{[company.city, company.state].filter(Boolean).join(", ")}
+									{company.category ? ` • ${company.category}` : ""}
 								</p>
 							</CardHeader>
 							<CardContent className="space-y-3">
-								{/* Score breakdown bars */}
 								{breakdown && (
 									<div className="space-y-1.5">
 										<ScoreBar
@@ -128,8 +159,6 @@ export function ReviewQueue() {
 										/>
 									</div>
 								)}
-
-								{/* Company info */}
 								<div className="grid grid-cols-2 gap-2 pt-1 text-muted-foreground text-xs">
 									{company.employeeCount && (
 										<span>
@@ -141,12 +170,10 @@ export function ReviewQueue() {
 									)}
 									{company.industry && <span>🏭 {company.industry}</span>}
 								</div>
-
-								{/* Actions */}
 								<div className="flex gap-2 pt-2">
 									<Button
 										className="flex-1"
-										disabled={approveMutation.isPending}
+										disabled={isPending}
 										onClick={() => approveMutation.mutate(company.id)}
 										size="sm"
 									>
@@ -155,7 +182,7 @@ export function ReviewQueue() {
 									</Button>
 									<Button
 										className="flex-1"
-										disabled={rejectMutation.isPending}
+										disabled={isPending}
 										onClick={() => rejectMutation.mutate(company.id)}
 										size="sm"
 										variant="outline"
@@ -193,14 +220,13 @@ function ScoreBar({
 	value: number;
 	max: number;
 }) {
-	const pct = (value / max) * 100;
 	return (
 		<div className="flex items-center gap-2 text-xs">
 			<span className="w-24 text-muted-foreground">{label}</span>
 			<div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
 				<div
 					className="h-full rounded-full bg-primary"
-					style={{ width: `${pct}%` }}
+					style={{ width: `${(value / max) * 100}%` }}
 				/>
 			</div>
 			<span className="w-8 text-right font-medium">

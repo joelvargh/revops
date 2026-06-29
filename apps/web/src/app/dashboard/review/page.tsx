@@ -11,14 +11,14 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { client } from "@/lib/orpc";
 
-type ReviewItem = {
-	id: string;
-	name: string;
-	industry: string | null;
+interface ReviewItem {
 	employeeCount: number | null;
+	id: string;
+	industry: string | null;
+	name: string;
 	revenueMm: number | null;
 	scoreTotal: number | null;
-};
+}
 
 export default function ReviewPage() {
 	const queryClient = useQueryClient();
@@ -27,7 +27,11 @@ export default function ReviewPage() {
 	const toggle = (id: string) =>
 		setSelected((prev) => {
 			const next = new Set(prev);
-			next.has(id) ? next.delete(id) : next.add(id);
+			if (next.has(id)) {
+				next.delete(id);
+			} else {
+				next.add(id);
+			}
 			return next;
 		});
 

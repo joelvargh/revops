@@ -11,9 +11,7 @@ export const reviewRouter = {
 				search: z.string().optional(),
 			})
 		)
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
+		.handler(async ({ context, input }) => {
 			const { page, perPage, search } = input;
 			const where: object = search
 				? {
@@ -22,7 +20,7 @@ export const reviewRouter = {
 					}
 				: { status: "ICP_REVIEW_PENDING" };
 			const [data, total] = await Promise.all([
-				prisma.company.findMany({
+				context.prisma.company.findMany({
 					where,
 					orderBy: { scoreTotal: "desc" },
 					skip: (page - 1) * perPage,
@@ -39,7 +37,7 @@ export const reviewRouter = {
 						scoreBreakdown: true,
 					},
 				}),
-				prisma.company.count({ where }),
+				context.prisma.company.count({ where }),
 			]);
 			return { data, total, pageCount: Math.ceil(total / perPage) };
 		}),
@@ -50,10 +48,8 @@ export const reviewRouter = {
 				.object({ limit: z.number().int().min(1).max(50).default(20) })
 				.optional()
 		)
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			return prisma.company.findMany({
+		.handler(async ({ context, input }) =>
+			context.prisma.company.findMany({
 				where: { status: "ICP_REVIEW_PENDING" },
 				orderBy: { scoreTotal: "desc" },
 				take: input?.limit ?? 20,
@@ -71,74 +67,64 @@ export const reviewRouter = {
 					scoreBreakdown: true,
 					discoveredAt: true,
 				},
-			});
-		}),
+			})
+		),
 
 	approve: protectedProcedure
 		.input(z.object({ companyId: z.string(), note: z.string().optional() }))
-		.handler(async ({ context, input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			return prisma.company.update({
+		.handler(async ({ context, input }) =>
+			context.prisma.company.update({
 				where: { id: input.companyId },
 				data: {
 					status: "ICP_REVIEW_APPROVED",
-					reviewedBy: context.session?.user?.id,
+					reviewedBy: context.session.user.id,
 					reviewedAt: new Date(),
 					reviewNote: input.note,
 				},
-			});
-		}),
+			})
+		),
 
 	reject: protectedProcedure
 		.input(z.object({ companyId: z.string(), note: z.string().optional() }))
-		.handler(async ({ context, input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			return prisma.company.update({
+		.handler(async ({ context, input }) =>
+			context.prisma.company.update({
 				where: { id: input.companyId },
 				data: {
 					status: "ICP_REVIEW_REJECTED",
-					reviewedBy: context.session?.user?.id,
+					reviewedBy: context.session.user.id,
 					reviewedAt: new Date(),
 					reviewNote: input.note,
 				},
-			});
-		}),
+			})
+		),
 
-	count: protectedProcedure.handler(async () => {
-		const { createPrismaClient } = await import("@revops/db");
-		const prisma = createPrismaClient();
-		return prisma.company.count({ where: { status: "ICP_REVIEW_PENDING" } });
-	}),
+	count: protectedProcedure.handler(async ({ context }) =>
+		context.prisma.company.count({ where: { status: "ICP_REVIEW_PENDING" } })
+	),
 
 	bulkApprove: protectedProcedure
-		.input(z.object({ companyIds: z.array(z.string()) }))
-		.handler(async ({ context, input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			return prisma.company.updateMany({
+		.input(z.object({ companyIds: z.array(z.string()).min(1).max(500) }))
+		.handler(async ({ context, input }) =>
+			context.prisma.company.updateMany({
 				where: { id: { in: input.companyIds }, status: "ICP_REVIEW_PENDING" },
 				data: {
 					status: "ICP_REVIEW_APPROVED",
-					reviewedBy: context.session?.user?.id,
+					reviewedBy: context.session.user.id,
 					reviewedAt: new Date(),
 				},
-			});
-		}),
+			})
+		),
 
 	bulkReject: protectedProcedure
-		.input(z.object({ companyIds: z.array(z.string()) }))
-		.handler(async ({ context, input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			return prisma.company.updateMany({
+		.input(z.object({ companyIds: z.array(z.string()).min(1).max(500) }))
+		.handler(async ({ context, input }) =>
+			context.prisma.company.updateMany({
 				where: { id: { in: input.companyIds }, status: "ICP_REVIEW_PENDING" },
 				data: {
 					status: "ICP_REVIEW_REJECTED",
-					reviewedBy: context.session?.user?.id,
+					reviewedBy: context.session.user.id,
 					reviewedAt: new Date(),
 				},
-			});
-		}),
+			})
+		),
 };

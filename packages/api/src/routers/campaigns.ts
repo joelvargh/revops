@@ -3,9 +3,8 @@ import { z } from "zod";
 import { protectedProcedure } from "../index";
 
 export const campaignsRouter = {
-	list: protectedProcedure.handler(async () => {
-		const { createPrismaClient } = await import("@revops/db");
-		const prisma = createPrismaClient();
+	list: protectedProcedure.handler(async ({ context }) => {
+		const prisma = context.prisma;
 		const campaigns = await prisma.campaign.findMany({
 			orderBy: { createdAt: "desc" },
 			include: {
@@ -27,30 +26,34 @@ export const campaignsRouter = {
 			},
 		});
 
-		// Get run stats per campaign
-		const result = await Promise.all(
-			campaigns.map(async (c) => {
-				const stats = await prisma.discoveryRun.groupBy({
-					by: ["status"],
-					where: { campaignId: c.id },
-					_count: true,
-				});
-				const statusCounts = Object.fromEntries(
-					stats.map((s) => [s.status, s._count])
-				);
-				return {
-					...c,
-					stats: {
-						total: c._count.discoveryRuns,
-						completed: statusCounts.COMPLETED ?? 0,
-						running: statusCounts.RUNNING ?? 0,
-						pending: statusCounts.PENDING ?? 0,
-						failed: statusCounts.FAILED ?? 0,
-					},
-				};
-			})
-		);
-		return result;
+		// Single groupBy instead of N+1 per campaign
+		const campaignIds = campaigns.map((c) => c.id);
+		const allStats = await prisma.discoveryRun.groupBy({
+			by: ["campaignId", "status"],
+			where: { campaignId: { in: campaignIds } },
+			_count: true,
+		});
+
+		const statsByCampaign = new Map<string, Record<string, number>>();
+		for (const s of allStats) {
+			const map = statsByCampaign.get(s.campaignId) ?? {};
+			map[s.status] = s._count;
+			statsByCampaign.set(s.campaignId, map);
+		}
+
+		return campaigns.map((c) => {
+			const counts = statsByCampaign.get(c.id) ?? {};
+			return {
+				...c,
+				stats: {
+					total: c._count.discoveryRuns,
+					completed: counts.COMPLETED ?? 0,
+					running: counts.RUNNING ?? 0,
+					pending: counts.PENDING ?? 0,
+					failed: counts.FAILED ?? 0,
+				},
+			};
+		});
 	}),
 
 	create: protectedProcedure
@@ -63,32 +66,23 @@ export const campaignsRouter = {
 				source: z.string().default("google_maps"),
 			})
 		)
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
+		.handler(async ({ context, input }) => {
+			const prisma = context.prisma;
 
-			// Create campaign + link region
-			const campaign = await prisma.campaign.create({
-				data: {
-					name: input.name,
-					searchTerm: input.searchTerm,
-					source: input.source,
-					regions: { create: { regionId: input.regionId } },
-				},
-			});
-
-			// Generate grid cells for region if not already done
 			const region = await prisma.region.findUniqueOrThrow({
 				where: { id: input.regionId },
 			});
+
+			// Generate cells if not already done
 			if (!region.cellsGenerated) {
-				const size = input.cellSize ?? region.cellSize;
-				if (input.cellSize) {
-					await prisma.region.update({
-						where: { id: region.id },
-						data: { cellSize: input.cellSize },
+				if (!region.polygon) {
+					const { ORPCError } = await import("@orpc/server");
+					throw new ORPCError("BAD_REQUEST", {
+						message:
+							"Region has no boundary polygon. Generate cells first in Settings > Geography.",
 					});
 				}
+				const size = input.cellSize ?? region.cellSize;
 				const { generateClippedCells } = await import("@revops/db/geo-utils");
 				const bbox: [number, number, number, number] = [
 					region.bboxWest,
@@ -99,48 +93,68 @@ export const campaignsRouter = {
 				const clippedCells = generateClippedCells(
 					{
 						type: "Feature",
-						geometry: region.polygon as
-							| import("@turf/helpers").Polygon
-							| import("@turf/helpers").MultiPolygon,
+						geometry: region.polygon as never,
 						properties: {},
 					},
 					bbox,
 					size
 				);
-				await prisma.gridCell.createMany({
-					data: clippedCells.map((c) => ({
-						regionId: region.id,
-						row: c.row,
-						col: c.col,
-						bboxSouth: c.bboxSouth,
-						bboxWest: c.bboxWest,
-						bboxNorth: c.bboxNorth,
-						bboxEast: c.bboxEast,
-						geometry: c.geometry,
+				await prisma.$transaction([
+					prisma.gridCell.createMany({
+						data: clippedCells.map((c) => ({
+							regionId: region.id,
+							row: c.row,
+							col: c.col,
+							bboxSouth: c.bboxSouth,
+							bboxWest: c.bboxWest,
+							bboxNorth: c.bboxNorth,
+							bboxEast: c.bboxEast,
+							geometry: c.geometry,
+						})),
+						skipDuplicates: true,
+					}),
+					prisma.region.update({
+						where: { id: region.id },
+						data: { cellSize: size, cellsGenerated: true },
+					}),
+				]);
+			}
+
+			// Create campaign + runs in a transaction
+			const cells = await prisma.gridCell.findMany({
+				where: { regionId: input.regionId },
+				select: {
+					id: true,
+					bboxSouth: true,
+					bboxWest: true,
+					bboxNorth: true,
+					bboxEast: true,
+					geometry: true,
+				},
+			});
+
+			const campaign = await prisma.$transaction(async (tx) => {
+				const c = await tx.campaign.create({
+					data: {
+						name: input.name,
+						searchTerm: input.searchTerm,
+						source: input.source,
+						regions: { create: { regionId: input.regionId } },
+					},
+				});
+				await tx.discoveryRun.createMany({
+					data: cells.map((cell) => ({
+						campaignId: c.id,
+						gridCellId: cell.id,
+						bboxSouth: cell.bboxSouth,
+						bboxWest: cell.bboxWest,
+						bboxNorth: cell.bboxNorth,
+						bboxEast: cell.bboxEast,
+						geometry: cell.geometry,
 					})),
 					skipDuplicates: true,
 				});
-				await prisma.region.update({
-					where: { id: region.id },
-					data: { cellsGenerated: true },
-				});
-			}
-
-			// Create discovery runs for each cell, snapshotting bbox + geometry
-			const cells = await prisma.gridCell.findMany({
-				where: { regionId: input.regionId },
-			});
-			await prisma.discoveryRun.createMany({
-				data: cells.map((cell) => ({
-					campaignId: campaign.id,
-					gridCellId: cell.id,
-					bboxSouth: cell.bboxSouth,
-					bboxWest: cell.bboxWest,
-					bboxNorth: cell.bboxNorth,
-					bboxEast: cell.bboxEast,
-					geometry: cell.geometry,
-				})),
-				skipDuplicates: true,
+				return c;
 			});
 
 			return campaign;
@@ -148,26 +162,26 @@ export const campaignsRouter = {
 
 	detail: protectedProcedure
 		.input(z.object({ campaignId: z.string() }))
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			const campaign = await prisma.campaign.findUniqueOrThrow({
-				where: { id: input.campaignId },
-				include: { regions: { include: { region: true } } },
-			});
-			const stats = await prisma.discoveryRun.groupBy({
-				by: ["status"],
-				where: { campaignId: input.campaignId },
-				_count: true,
-			});
+		.handler(async ({ context, input }) => {
+			const prisma = context.prisma;
+			const [campaign, stats] = await Promise.all([
+				prisma.campaign.findUniqueOrThrow({
+					where: { id: input.campaignId },
+					include: { regions: { include: { region: true } } },
+				}),
+				prisma.discoveryRun.groupBy({
+					by: ["status"],
+					where: { campaignId: input.campaignId },
+					_count: true,
+				}),
+			]);
 			const statusCounts = Object.fromEntries(
 				stats.map((s) => [s.status, s._count])
 			);
-			const total = stats.reduce((sum, s) => sum + s._count, 0);
 			return {
 				...campaign,
 				discoveryRunStats: {
-					total,
+					total: stats.reduce((sum, s) => sum + s._count, 0),
 					pending: statusCounts.PENDING ?? 0,
 					completed: statusCounts.COMPLETED ?? 0,
 					failed: statusCounts.FAILED ?? 0,
@@ -177,14 +191,12 @@ export const campaignsRouter = {
 
 	update: protectedProcedure
 		.input(z.object({ campaignId: z.string(), name: z.string().min(1) }))
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			return prisma.campaign.update({
+		.handler(async ({ context, input }) =>
+			context.prisma.campaign.update({
 				where: { id: input.campaignId },
 				data: { name: input.name },
-			});
-		}),
+			})
+		),
 
 	updateStatus: protectedProcedure
 		.input(
@@ -193,50 +205,48 @@ export const campaignsRouter = {
 				status: z.enum(["ACTIVE", "PAUSED", "COMPLETED"]),
 			})
 		)
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			return prisma.campaign.update({
+		.handler(async ({ context, input }) =>
+			context.prisma.campaign.update({
 				where: { id: input.campaignId },
 				data: { status: input.status },
-			});
-		}),
+			})
+		),
 
 	delete: protectedProcedure
 		.input(z.object({ campaignId: z.string() }))
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-			await prisma.company.updateMany({
+		.handler(async ({ context, input }) => {
+			// Cascade delete handles discoveryRun + campaignRegion via schema onDelete:Cascade
+			// Just detach companies first (no cascade on company.campaignId)
+			await context.prisma.company.updateMany({
 				where: { campaignId: input.campaignId },
 				data: { campaignId: null },
 			});
-			await prisma.discoveryRun.deleteMany({
-				where: { campaignId: input.campaignId },
-			});
-			await prisma.campaignRegion.deleteMany({
-				where: { campaignId: input.campaignId },
-			});
-			await prisma.campaign.delete({ where: { id: input.campaignId } });
+			await context.prisma.campaign.delete({ where: { id: input.campaignId } });
 			return { success: true };
 		}),
 
-	// Returns ALL grid cells for the campaign's regions, with the latest discovery run
-	// status merged in. Cells with no run get status PENDING so the full state grid is visible.
 	gridCells: protectedProcedure
 		.input(z.object({ campaignId: z.string() }))
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
+		.handler(async ({ context, input }) => {
+			const prisma = context.prisma;
 
-			// 1. Resolve which regions this campaign covers
-			const campaignRegions = await prisma.campaignRegion.findMany({
-				where: { campaignId: input.campaignId },
-				select: { regionId: true },
-			});
+			const [campaignRegions, runs] = await Promise.all([
+				prisma.campaignRegion.findMany({
+					where: { campaignId: input.campaignId },
+					select: { regionId: true },
+				}),
+				prisma.discoveryRun.findMany({
+					where: { campaignId: input.campaignId },
+					select: {
+						gridCellId: true,
+						status: true,
+						resultsFound: true,
+						resultsNew: true,
+					},
+				}),
+			]);
+
 			const regionIds = campaignRegions.map((cr) => cr.regionId);
-
-			// 2. Fetch every grid cell for those regions
 			const allCells = await prisma.gridCell.findMany({
 				where: { regionId: { in: regionIds } },
 				select: {
@@ -251,18 +261,6 @@ export const campaignsRouter = {
 				},
 			});
 
-			// 3. Fetch all runs for this campaign so we can merge status per cell
-			const runs = await prisma.discoveryRun.findMany({
-				where: { campaignId: input.campaignId },
-				select: {
-					gridCellId: true,
-					status: true,
-					resultsFound: true,
-					resultsNew: true,
-				},
-			});
-
-			// Build a map of cellId → run (prefer COMPLETED > RUNNING > FAILED > PENDING)
 			const STATUS_PRIORITY: Record<string, number> = {
 				COMPLETED: 4,
 				RUNNING: 3,
@@ -291,18 +289,10 @@ export const campaignsRouter = {
 				}
 			}
 
-			// 4. Merge: every cell gets a status (PENDING if no run yet)
 			return allCells.map((cell) => {
 				const run = runByCellId.get(cell.id);
 				return {
-					id: cell.id,
-					row: cell.row,
-					col: cell.col,
-					bboxSouth: cell.bboxSouth,
-					bboxWest: cell.bboxWest,
-					bboxNorth: cell.bboxNorth,
-					bboxEast: cell.bboxEast,
-					geometry: cell.geometry,
+					...cell,
 					status: run?.status ?? "PENDING",
 					resultsFound: run?.resultsFound ?? 0,
 					resultsNew: run?.resultsNew ?? 0,
@@ -310,22 +300,10 @@ export const campaignsRouter = {
 			});
 		}),
 
-	regions: protectedProcedure.handler(async () => {
-		const { createPrismaClient } = await import("@revops/db");
-		const prisma = createPrismaClient();
-		return prisma.region.findMany({
-			include: { country: { select: { code: true } } },
-			orderBy: { name: "asc" },
-		});
-	}),
-
-	// Heatmap: avg score per discovery run for a campaign
 	heatmap: protectedProcedure
 		.input(z.object({ campaignId: z.string() }))
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
-
+		.handler(async ({ context, input }) => {
+			const prisma = context.prisma;
 			const runs = await prisma.discoveryRun.findMany({
 				where: {
 					campaignId: input.campaignId,
@@ -333,7 +311,6 @@ export const campaignsRouter = {
 					bboxSouth: { not: null },
 				},
 				select: {
-					id: true,
 					bboxSouth: true,
 					bboxWest: true,
 					bboxNorth: true,
@@ -342,45 +319,52 @@ export const campaignsRouter = {
 				},
 			});
 
-			const result = await Promise.all(
-				runs
-					.filter(
-						(
-							run
-						): run is typeof run & {
-							bboxSouth: number;
-							bboxNorth: number;
-							bboxWest: number;
-							bboxEast: number;
-						} =>
-							run.bboxSouth !== null &&
-							run.bboxNorth !== null &&
-							run.bboxWest !== null &&
-							run.bboxEast !== null
-					)
-					.map(async (run) => {
-						const avgScore = await prisma.company.aggregate({
-							where: {
-								campaignId: input.campaignId,
-								lat: { gte: run.bboxSouth, lte: run.bboxNorth },
-								lng: { gte: run.bboxWest, lte: run.bboxEast },
-								scoreTotal: { not: null },
-							},
-							_avg: { scoreTotal: true },
-							_count: true,
-						});
-						return {
-							row: run.gridCell?.row ?? null,
-							col: run.gridCell?.col ?? null,
-							bboxSouth: run.bboxSouth,
-							bboxWest: run.bboxWest,
-							bboxNorth: run.bboxNorth,
-							bboxEast: run.bboxEast,
-							avgScore: avgScore._avg.scoreTotal ?? 0,
-							count: avgScore._count,
-						};
-					})
+			const validRuns = runs.filter(
+				(
+					r
+				): r is typeof r & {
+					bboxSouth: number;
+					bboxNorth: number;
+					bboxWest: number;
+					bboxEast: number;
+				} =>
+					r.bboxSouth !== null &&
+					r.bboxNorth !== null &&
+					r.bboxWest !== null &&
+					r.bboxEast !== null
 			);
-			return result;
+
+			// Fetch all scored companies in the campaign once, then group in memory
+			const companies = await prisma.company.findMany({
+				where: { campaignId: input.campaignId, scoreTotal: { not: null } },
+				select: { lat: true, lng: true, scoreTotal: true },
+			});
+
+			return validRuns.map((run) => {
+				const inCell = companies.filter(
+					(c) =>
+						c.lat !== null &&
+						c.lng !== null &&
+						c.lat >= run.bboxSouth &&
+						c.lat <= run.bboxNorth &&
+						c.lng >= run.bboxWest &&
+						c.lng <= run.bboxEast
+				);
+				const avgScore =
+					inCell.length > 0
+						? inCell.reduce((sum, c) => sum + (c.scoreTotal ?? 0), 0) /
+							inCell.length
+						: 0;
+				return {
+					row: run.gridCell?.row ?? null,
+					col: run.gridCell?.col ?? null,
+					bboxSouth: run.bboxSouth,
+					bboxWest: run.bboxWest,
+					bboxNorth: run.bboxNorth,
+					bboxEast: run.bboxEast,
+					avgScore,
+					count: inCell.length,
+				};
+			});
 		}),
 };

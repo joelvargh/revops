@@ -180,7 +180,10 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "={{ \"INSERT INTO contact (id, \\\"companyId\\\", \\\"firstName\\\", \\\"lastName\\\", email, phone, linkedin, title, seniority, \\\"apolloId\\\", revealed, verified, source) VALUES (gen_random_uuid(), '\" + $json.companyId + \"', \" + ($json.firstName ? \"'\" + $json.firstName.replace(/'/g, \"''\") + \"'\" : 'NULL') + \", \" + ($json.lastName ? \"'\" + $json.lastName.replace(/'/g, \"''\") + \"'\" : 'NULL') + \", \" + ($json.email ? \"'\" + $json.email + \"'\" : 'NULL') + \", \" + ($json.phone ? \"'\" + $json.phone + \"'\" : 'NULL') + \", \" + ($json.linkedin ? \"'\" + $json.linkedin + \"'\" : 'NULL') + \", \" + ($json.title ? \"'\" + $json.title.replace(/'/g, \"''\") + \"'\" : 'NULL') + \", \" + ($json.seniority ? \"'\" + $json.seniority + \"'\" : 'NULL') + \", \" + ($json.apolloId ? \"'\" + $json.apolloId + \"'\" : 'NULL') + \", true, \" + $json.verified + \", 'apollo_reveal') ON CONFLICT DO NOTHING\" }}",
+        "query": "INSERT INTO contact (id, \"companyId\", \"firstName\", \"lastName\", email, phone, linkedin, title, seniority, \"apolloId\", revealed, verified, source, \"createdAt\", \"updatedAt\") VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10, 'apollo_reveal', NOW(), NOW()) ON CONFLICT DO NOTHING",
+        "additionalFields": {
+          "queryParams": "={{ [$json.companyId, $json.firstName, $json.lastName, $json.email, $json.phone, $json.linkedin, $json.title, $json.seniority, $json.apolloId, $json.verified] }}"
+        },
         "options": {
           "queryBatching": "independently"
         }

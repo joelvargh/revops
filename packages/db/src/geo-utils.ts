@@ -27,32 +27,53 @@ export interface ClippedCell {
 }
 
 // Minimum fraction of a full cell area to keep.
-// 0.001 = 0.1% — preserves thin coastal strips and narrow panhandle edges.
-const MIN_AREA_FRACTION = 0.001;
+// 0.0001 = 0.01% — preserves narrow coastal peninsulas and barrier island strips.
+const MIN_AREA_FRACTION = 0.0001;
 
 /**
- * Clips a single grid rectangle against a state polygon (Polygon or MultiPolygon).
- *
- * For MultiPolygon states (e.g. Florida mainland + Keys + barrier islands),
- * each sub-polygon is intersected separately so no island geography is silently
- * dropped. If the cell overlaps multiple sub-polygons it is returned as a
- * MultiPolygon so Apify can search both areas in one run.
+ * Clips a single grid rectangle against a state polygon.
+ * subBboxes is pre-computed once per state to skip impossible intersections.
  */
 function clipCellAgainstState(
 	cell: Feature<Polygon>,
-	state: Feature<Polygon | MultiPolygon>
+	state: Feature<Polygon | MultiPolygon>,
+	subBboxes: [number, number, number, number][] | undefined
 ): Feature<Polygon | MultiPolygon> | null {
 	if (state.geometry.type === "Polygon") {
 		return intersect(featureCollection([cell, state as Feature<Polygon>]));
 	}
 
-	// MultiPolygon: intersect each sub-polygon independently
+	const ring = cell.geometry.coordinates[0];
+	const cW = ring[0][0];
+	const cS = ring[0][1];
+	const cE = ring[2][0];
+	const cN = ring[2][1];
+
 	const parts: Feature<Polygon>[] = [];
-	for (const coords of state.geometry.coordinates) {
-		const subPoly = feature({ type: "Polygon" as const, coordinates: coords });
+	const coordsList = state.geometry.coordinates;
+	for (let i = 0; i < coordsList.length; i++) {
+		if (subBboxes) {
+			const [minLng, minLat, maxLng, maxLat] = subBboxes[i];
+			if (maxLng < cW || minLng > cE || maxLat < cS || minLat > cN) {
+				continue;
+			}
+		}
+		const subPoly = feature({
+			type: "Polygon" as const,
+			coordinates: coordsList[i],
+		});
 		const clipped = intersect(featureCollection([cell, subPoly]));
 		if (clipped) {
-			parts.push(clipped as Feature<Polygon>);
+			// intersect can return MultiPolygon if the sub-polygon has holes/complex shape
+			if (clipped.geometry.type === "MultiPolygon") {
+				for (const coords of clipped.geometry.coordinates) {
+					parts.push(
+						feature({ type: "Polygon" as const, coordinates: coords })
+					);
+				}
+			} else {
+				parts.push(clipped as Feature<Polygon>);
+			}
 		}
 	}
 
@@ -63,7 +84,6 @@ function clipCellAgainstState(
 		return parts[0];
 	}
 
-	// Cell overlaps multiple disconnected islands — return as MultiPolygon
 	return feature({
 		type: "MultiPolygon" as const,
 		coordinates: parts.map(
@@ -74,27 +94,39 @@ function clipCellAgainstState(
 	});
 }
 
-/**
- * Splits a state polygon into rectangular grid cells clipped to the boundary.
- *
- * Generates a grid of (cellSizeDeg × cellSizeDeg) rectangles over the bounding
- * box, intersects each with the state polygon, and drops cells outside or below
- * the sliver threshold. Handles both Polygon and MultiPolygon states so islands
- * and the Florida Keys are fully covered.
- *
- * The stored geometry is passed directly to the Apify scraper as
- * `customGeolocation`, ensuring the scraper searches only within the actual
- * state boundary — no ocean, no neighboring-state overlap.
- */
 export function generateClippedCells(
 	statePolygon: Feature<Polygon | MultiPolygon>,
 	bbox: BBox,
 	cellSizeDeg: number
 ): ClippedCell[] {
 	const [west, south, east, north] = bbox;
-	// Approximate area of one full unclipped cell (m²)
-	const fullCellArea = cellSizeDeg * cellSizeDeg * 111_000 * 111_000;
-	const minArea = fullCellArea * MIN_AREA_FRACTION;
+
+	// Pre-compute sub-polygon bboxes once — skips impossible intersections per cell
+	let subBboxes: [number, number, number, number][] | undefined;
+	if (statePolygon.geometry.type === "MultiPolygon") {
+		subBboxes = statePolygon.geometry.coordinates.map((coords) => {
+			const outer = coords[0];
+			let minLng = Number.POSITIVE_INFINITY;
+			let maxLng = Number.NEGATIVE_INFINITY;
+			let minLat = Number.POSITIVE_INFINITY;
+			let maxLat = Number.NEGATIVE_INFINITY;
+			for (const [lng, lat] of outer) {
+				if (lng < minLng) {
+					minLng = lng;
+				}
+				if (lng > maxLng) {
+					maxLng = lng;
+				}
+				if (lat < minLat) {
+					minLat = lat;
+				}
+				if (lat > maxLat) {
+					maxLat = lat;
+				}
+			}
+			return [minLng, minLat, maxLng, maxLat];
+		});
+	}
 
 	const cells: ClippedCell[] = [];
 	let row = 0;
@@ -120,13 +152,20 @@ export function generateClippedCells(
 				],
 			});
 
-			const clipped = clipCellAgainstState(cellFeature, statePolygon);
+			// Use actual cell area (not flat-earth approx) for accurate threshold
+			const cellArea = area(cellFeature);
+			const minArea = cellArea * MIN_AREA_FRACTION;
+
+			const clipped = clipCellAgainstState(
+				cellFeature,
+				statePolygon,
+				subBboxes
+			);
 			if (!clipped) {
 				col++;
 				continue;
 			}
 
-			// Drop slivers smaller than 0.1% of a full cell
 			if (area(clipped) < minArea) {
 				col++;
 				continue;

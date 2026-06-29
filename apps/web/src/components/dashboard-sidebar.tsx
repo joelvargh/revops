@@ -5,7 +5,7 @@ import {
 	ClipboardCheck,
 	LayoutDashboard,
 	LogOut,
-	Map,
+	Map as MapIcon,
 	Megaphone,
 	Search,
 	Settings,
@@ -43,7 +43,7 @@ import { authClient } from "@/lib/auth-client";
 
 const mainNav = [
 	{ label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-	{ label: "Territory Map", href: "/dashboard/map", icon: Map },
+	{ label: "Territory Map", href: "/dashboard/map", icon: MapIcon },
 	{ label: "Campaigns", href: "/dashboard/campaigns", icon: Megaphone },
 	{ label: "Review Queue", href: "/dashboard/review", icon: ClipboardCheck },
 	{ label: "Research", href: "/dashboard/research", icon: Search },

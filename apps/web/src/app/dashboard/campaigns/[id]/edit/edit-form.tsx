@@ -28,7 +28,7 @@ export function EditCampaignForm() {
 		mutationFn: () => client.campaigns.update({ campaignId: id, name }),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: orpc.campaigns.key() });
-			router.push(`/dashboard/campaigns/${id}` as any);
+			router.push(`/dashboard/campaigns/${id}`);
 		},
 	});
 

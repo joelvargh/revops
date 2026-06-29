@@ -14,10 +14,13 @@ import { client, orpc } from "@/lib/orpc";
 
 export function ResearchQueue() {
 	const queryClient = useQueryClient();
-	const { data: companies, isLoading } = useQuery(
-		orpc.research.queue.queryOptions({})
-	);
+	const {
+		data: companies,
+		isLoading,
+		isError,
+	} = useQuery(orpc.research.queue.queryOptions({}));
 	const { data: count } = useQuery(orpc.research.count.queryOptions({}));
+	const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
 
 	const submitMutation = useMutation({
 		mutationFn: (input: {
@@ -26,40 +29,57 @@ export function ResearchQueue() {
 			revenueMm: number | null;
 			industry: string | null;
 		}) => client.research.submit(input),
+		onMutate: ({ companyId }) =>
+			setPendingIds((s) => new Set(s).add(companyId)),
+		onSettled: (_, __, { companyId }) =>
+			setPendingIds((s) => {
+				const n = new Set(s);
+				n.delete(companyId);
+				return n;
+			}),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: orpc.research.key() });
-			toast.success("Company data submitted will be scored next cycle");
+			toast.success("Submitted for scoring");
 		},
+		onError: () => toast.error("Failed to submit"),
 	});
 
 	const skipMutation = useMutation({
 		mutationFn: (companyId: string) => client.research.skip({ companyId }),
+		onMutate: (id) => setPendingIds((s) => new Set(s).add(id)),
+		onSettled: (_, __, id) =>
+			setPendingIds((s) => {
+				const n = new Set(s);
+				n.delete(id);
+				return n;
+			}),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: orpc.research.key() });
-			toast.info("Company skipped (marked as RED)");
+			toast.info("Company skipped");
 		},
 	});
 
 	if (isLoading) {
 		return <p className="text-muted-foreground">Loading...</p>;
 	}
+	if (isError) {
+		return <p className="text-destructive">Failed to load research queue.</p>;
+	}
 
 	return (
 		<div className="space-y-4">
 			<Badge variant="secondary">{count ?? 0} companies need research</Badge>
-
 			{companies?.length === 0 && (
 				<p className="py-12 text-center text-muted-foreground">
-					🎉 No companies need research. All automated!
+					🎉 No companies need research.
 				</p>
 			)}
-
 			<div className="grid gap-4 md:grid-cols-2">
 				{companies?.map((company) => (
 					<ResearchCard
 						company={company}
 						key={company.id}
-						loading={submitMutation.isPending}
+						loading={pendingIds.has(company.id)}
 						onSkip={() => skipMutation.mutate(company.id)}
 						onSubmit={(data) =>
 							submitMutation.mutate({ companyId: company.id, ...data })
@@ -115,7 +135,8 @@ function ResearchCard({
 					)}
 				</div>
 				<p className="text-muted-foreground text-xs">
-					{company.city}, {company.state} • {company.category}
+					{[company.city, company.state].filter(Boolean).join(", ")}
+					{company.category ? ` • ${company.category}` : ""}
 				</p>
 				{company.domain && (
 					<p className="font-mono text-muted-foreground text-xs">
@@ -126,8 +147,11 @@ function ResearchCard({
 			<CardContent className="space-y-3">
 				<div className="grid grid-cols-3 gap-2">
 					<div className="space-y-1">
-						<Label className="text-xs">Employees</Label>
+						<Label className="text-xs" htmlFor={`emp-${company.id}`}>
+							Employees
+						</Label>
 						<Input
+							id={`emp-${company.id}`}
 							onChange={(e) => setEmployees(e.target.value)}
 							placeholder="e.g. 150"
 							type="number"
@@ -135,8 +159,11 @@ function ResearchCard({
 						/>
 					</div>
 					<div className="space-y-1">
-						<Label className="text-xs">Revenue ($M)</Label>
+						<Label className="text-xs" htmlFor={`rev-${company.id}`}>
+							Revenue ($M)
+						</Label>
 						<Input
+							id={`rev-${company.id}`}
 							onChange={(e) => setRevenue(e.target.value)}
 							placeholder="e.g. 25"
 							type="number"
@@ -144,8 +171,11 @@ function ResearchCard({
 						/>
 					</div>
 					<div className="space-y-1">
-						<Label className="text-xs">Industry</Label>
+						<Label className="text-xs" htmlFor={`ind-${company.id}`}>
+							Industry
+						</Label>
 						<Input
+							id={`ind-${company.id}`}
 							onChange={(e) => setIndustry(e.target.value)}
 							placeholder="e.g. Construction"
 							value={industry}
@@ -168,7 +198,7 @@ function ResearchCard({
 						<Search className="mr-1 h-3 w-3" />
 						Submit & Score
 					</Button>
-					<Button onClick={onSkip} size="sm" variant="ghost">
+					<Button disabled={loading} onClick={onSkip} size="sm" variant="ghost">
 						<SkipForward className="mr-1 h-3 w-3" />
 						Skip
 					</Button>

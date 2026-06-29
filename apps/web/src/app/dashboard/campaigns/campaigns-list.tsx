@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MapPin, Pause, Play, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,14 +19,32 @@ import {
 } from "@/components/ui/select";
 import { client, orpc } from "@/lib/orpc";
 
+function campaignStatusVariant(
+	status: string
+): "default" | "secondary" | "outline" {
+	if (status === "ACTIVE") {
+		return "default";
+	}
+	if (status === "PAUSED") {
+		return "secondary";
+	}
+	return "outline";
+}
+
 export function CampaignsList() {
 	const queryClient = useQueryClient();
 	const [showCreate, setShowCreate] = useState(false);
+	const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+	const [formKey, setFormKey] = useState(0);
 
-	const { data: campaigns, isLoading } = useQuery(
-		orpc.campaigns.list.queryOptions({})
+	const {
+		data: campaigns,
+		isLoading,
+		isError,
+	} = useQuery(orpc.campaigns.list.queryOptions({}));
+	const { data: regions, isError: regionsError } = useQuery(
+		orpc.campaigns.regions.queryOptions({})
 	);
-	const { data: regions } = useQuery(orpc.campaigns.regions.queryOptions({}));
 
 	const createMutation = useMutation({
 		mutationFn: (input: {
@@ -36,7 +55,11 @@ export function CampaignsList() {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: orpc.campaigns.key() });
 			setShowCreate(false);
+			setFormKey((k) => k + 1);
+			toast.success("Campaign created");
 		},
+		onError: (e) =>
+			toast.error(e instanceof Error ? e.message : "Failed to create campaign"),
 	});
 
 	const updateStatusMutation = useMutation({
@@ -46,17 +69,24 @@ export function CampaignsList() {
 		}) => client.campaigns.updateStatus(input),
 		onSuccess: () =>
 			queryClient.invalidateQueries({ queryKey: orpc.campaigns.key() }),
+		onError: () => toast.error("Failed to update status"),
 	});
 
 	const deleteMutation = useMutation({
 		mutationFn: (input: { campaignId: string }) =>
 			client.campaigns.delete(input),
-		onSuccess: () =>
-			queryClient.invalidateQueries({ queryKey: orpc.campaigns.key() }),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: orpc.campaigns.key() });
+			toast.success("Campaign deleted");
+		},
+		onError: () => toast.error("Failed to delete campaign"),
 	});
 
 	if (isLoading) {
 		return <p className="text-muted-foreground">Loading campaigns...</p>;
+	}
+	if (isError) {
+		return <p className="text-destructive">Failed to load campaigns.</p>;
 	}
 
 	return (
@@ -74,11 +104,18 @@ export function CampaignsList() {
 						<CardTitle>Create Campaign</CardTitle>
 					</CardHeader>
 					<CardContent>
-						<CreateCampaignForm
-							loading={createMutation.isPending}
-							onSubmit={(data) => createMutation.mutate(data)}
-							regions={regions ?? []}
-						/>
+						{regionsError ? (
+							<p className="text-destructive text-sm">
+								Failed to load regions.
+							</p>
+						) : (
+							<CreateCampaignForm
+								key={formKey}
+								loading={createMutation.isPending}
+								onSubmit={(data) => createMutation.mutate(data)}
+								regions={regions ?? []}
+							/>
+						)}
 					</CardContent>
 				</Card>
 			)}
@@ -89,15 +126,7 @@ export function CampaignsList() {
 						<CardHeader className="pb-2">
 							<div className="flex items-center justify-between">
 								<CardTitle className="text-base">{campaign.name}</CardTitle>
-								<Badge
-									variant={
-										campaign.status === "ACTIVE"
-											? "default"
-											: campaign.status === "PAUSED"
-												? "secondary"
-												: "outline"
-									}
-								>
+								<Badge variant={campaignStatusVariant(campaign.status)}>
 									{campaign.status}
 								</Badge>
 							</div>
@@ -116,7 +145,6 @@ export function CampaignsList() {
 								</p>
 							</div>
 
-							{/* Progress */}
 							<div className="space-y-1">
 								<div className="flex justify-between text-muted-foreground text-xs">
 									<span>
@@ -142,9 +170,9 @@ export function CampaignsList() {
 								</div>
 							</div>
 
-							{/* Actions */}
 							<div className="flex gap-2 pt-2">
 								<Button
+									disabled={updateStatusMutation.isPending}
 									onClick={() =>
 										updateStatusMutation.mutate({
 											campaignId: campaign.id,
@@ -163,21 +191,43 @@ export function CampaignsList() {
 									{campaign.status === "ACTIVE" ? "Pause" : "Resume"}
 								</Button>
 								<Button asChild size="sm" variant="outline">
-									<a href={`/map?campaign=${campaign.id}`}>
+									<a href={`/dashboard/map?campaign=${campaign.id}`}>
 										<MapPin className="mr-1 h-3 w-3" />
 										Map
 									</a>
 								</Button>
-								<Button
-									className="ml-auto text-destructive"
-									onClick={() =>
-										deleteMutation.mutate({ campaignId: campaign.id })
-									}
-									size="sm"
-									variant="ghost"
-								>
-									<Trash2 className="h-3 w-3" />
-								</Button>
+								{confirmDeleteId === campaign.id ? (
+									<div className="ml-auto flex items-center gap-1">
+										<span className="text-destructive text-xs">Delete?</span>
+										<Button
+											onClick={() => {
+												deleteMutation.mutate({ campaignId: campaign.id });
+												setConfirmDeleteId(null);
+											}}
+											size="sm"
+											variant="destructive"
+										>
+											Yes
+										</Button>
+										<Button
+											onClick={() => setConfirmDeleteId(null)}
+											size="sm"
+											variant="ghost"
+										>
+											No
+										</Button>
+									</div>
+								) : (
+									<Button
+										className="ml-auto text-destructive"
+										disabled={deleteMutation.isPending}
+										onClick={() => setConfirmDeleteId(campaign.id)}
+										size="sm"
+										variant="ghost"
+									>
+										<Trash2 className="h-3 w-3" />
+									</Button>
+								)}
 							</div>
 						</CardContent>
 					</Card>
@@ -221,8 +271,9 @@ function CreateCampaignForm({
 			}}
 		>
 			<div className="space-y-1">
-				<Label>Campaign Name</Label>
+				<Label htmlFor="campaign-name">Campaign Name</Label>
 				<Input
+					id="campaign-name"
 					onChange={(e) => setName(e.target.value)}
 					placeholder="Construction TX Q3"
 					required
@@ -230,8 +281,9 @@ function CreateCampaignForm({
 				/>
 			</div>
 			<div className="space-y-1">
-				<Label>Search Term</Label>
+				<Label htmlFor="search-term">Search Term</Label>
 				<Input
+					id="search-term"
 					onChange={(e) => setSearchTerm(e.target.value)}
 					placeholder="general contractors"
 					required
@@ -239,9 +291,9 @@ function CreateCampaignForm({
 				/>
 			</div>
 			<div className="space-y-1">
-				<Label>Region</Label>
+				<Label htmlFor="region-select">Region</Label>
 				<Select onValueChange={setRegionId} value={regionId}>
-					<SelectTrigger>
+					<SelectTrigger id="region-select">
 						<SelectValue placeholder="Select region" />
 					</SelectTrigger>
 					<SelectContent>
@@ -254,8 +306,12 @@ function CreateCampaignForm({
 				</Select>
 			</div>
 			<div className="flex items-end">
-				<Button className="w-full" disabled={loading} type="submit">
-					{loading ? "Creating..." : "Create & Generate Cells"}
+				<Button
+					className="w-full"
+					disabled={loading || !regionId}
+					type="submit"
+				>
+					{loading ? "Creating..." : "Create"}
 				</Button>
 			</div>
 		</form>

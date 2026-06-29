@@ -2,6 +2,19 @@ import { z } from "zod";
 
 import { protectedProcedure } from "../index";
 
+const ALLOWED_SORT_FIELDS = new Set([
+	"name",
+	"domain",
+	"city",
+	"state",
+	"industry",
+	"employeeCount",
+	"revenueMm",
+	"scoreTotal",
+	"discoveredAt",
+	"createdAt",
+]);
+
 export const leadsRouter = {
 	list: protectedProcedure
 		.input(
@@ -20,9 +33,7 @@ export const leadsRouter = {
 					.optional(),
 			})
 		)
-		.handler(async ({ input }) => {
-			const { createPrismaClient } = await import("@revops/db");
-			const prisma = createPrismaClient();
+		.handler(async ({ context, input }) => {
 			const {
 				page,
 				perPage,
@@ -35,13 +46,11 @@ export const leadsRouter = {
 				status,
 				sort,
 			} = input;
-
 			const conditions: object[] = [];
 
 			if (status?.length) {
 				conditions.push({ status: { in: status } });
 			}
-
 			if (search) {
 				conditions.push({
 					OR: [
@@ -73,11 +82,13 @@ export const leadsRouter = {
 
 			const where = { AND: conditions };
 			const orderBy = sort?.length
-				? sort.map((s) => ({ [s.id]: s.desc ? "desc" : "asc" }))
+				? sort
+						.filter((s) => ALLOWED_SORT_FIELDS.has(s.id))
+						.map((s) => ({ [s.id]: s.desc ? "desc" : "asc" }))
 				: [{ scoreTotal: "desc" as const }];
 
 			const [companies, total] = await Promise.all([
-				prisma.company.findMany({
+				context.prisma.company.findMany({
 					where,
 					orderBy,
 					skip: (page - 1) * perPage,
@@ -90,20 +101,20 @@ export const leadsRouter = {
 						},
 					},
 				}),
-				prisma.company.count({ where }),
+				context.prisma.company.count({ where }),
 			]);
 
 			return { companies, total, pageCount: Math.ceil(total / perPage) };
 		}),
 
-	stats: protectedProcedure.handler(async () => {
-		const { createPrismaClient } = await import("@revops/db");
-		const prisma = createPrismaClient();
+	stats: protectedProcedure.handler(async ({ context }) => {
 		const [qualified, approved, contactAcquired, ready] = await Promise.all([
-			prisma.company.count({ where: { status: "ICP_QUALIFIED" } }),
-			prisma.company.count({ where: { status: "ICP_REVIEW_APPROVED" } }),
-			prisma.company.count({ where: { status: "CONTACT_ACQUIRED" } }),
-			prisma.company.count({ where: { status: "READY" } }),
+			context.prisma.company.count({ where: { status: "ICP_QUALIFIED" } }),
+			context.prisma.company.count({
+				where: { status: "ICP_REVIEW_APPROVED" },
+			}),
+			context.prisma.company.count({ where: { status: "CONTACT_ACQUIRED" } }),
+			context.prisma.company.count({ where: { status: "READY" } }),
 		]);
 		return {
 			qualified,
@@ -111,6 +122,27 @@ export const leadsRouter = {
 			contactAcquired,
 			ready,
 			total: qualified + approved + contactAcquired + ready,
+		};
+	}),
+
+	filterOptions: protectedProcedure.handler(async ({ context }) => {
+		const [states, industries] = await Promise.all([
+			context.prisma.company.findMany({
+				where: { state: { not: null } },
+				select: { state: true },
+				distinct: ["state"],
+				orderBy: { state: "asc" },
+			}),
+			context.prisma.company.findMany({
+				where: { industry: { not: null } },
+				select: { industry: true },
+				distinct: ["industry"],
+				orderBy: { industry: "asc" },
+			}),
+		]);
+		return {
+			states: states.map((s) => s.state as string),
+			industries: industries.map((i) => i.industry as string),
 		};
 	}),
 };

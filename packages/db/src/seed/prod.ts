@@ -9,22 +9,14 @@ type Prisma = InstanceType<typeof PrismaClient>;
 
 async function seedAdminUser(prisma: Prisma) {
 	const adminEmail = process.env.SEED_ADMIN_EMAIL;
-
 	if (!adminEmail) {
 		console.log("  · SEED_ADMIN_EMAIL not set, skipping admin creation");
 		return;
 	}
-
-	const existing = await prisma.user.findUnique({
+	await prisma.user.upsert({
 		where: { email: adminEmail },
-	});
-	if (existing) {
-		console.log(`  · Admin ${adminEmail} already exists, skipped`);
-		return;
-	}
-
-	await prisma.user.create({
-		data: {
+		update: {},
+		create: {
 			id: crypto.randomUUID(),
 			name: "Admin",
 			email: adminEmail,
@@ -32,7 +24,7 @@ async function seedAdminUser(prisma: Prisma) {
 			role: "admin",
 		},
 	});
-	console.log(`  ✓ Admin ${adminEmail} created`);
+	console.log(`  ✓ Admin ${adminEmail} upserted`);
 }
 
 async function seedSettings(prisma: Prisma) {
@@ -118,7 +110,7 @@ async function seedSettings(prisma: Prisma) {
 		{
 			category: "discovery",
 			key: "cell_size_degrees",
-			value: 0.5,
+			value: 0.25,
 			label: "Grid cell size in degrees",
 		},
 		{
@@ -138,6 +130,19 @@ async function seedSettings(prisma: Prisma) {
 			key: "target_seniorities",
 			value: ["owner", "founder", "c_suite", "vp", "director"],
 			label: "Seniority filter for people search",
+		},
+		{
+			category: "enrichment",
+			key: "sonar_system_prompt",
+			value:
+				'For the company "{{name}}" located at "{{address}}", Google Maps category: "{{category}}".\nReturn ONLY valid JSON:\n{\n  "employees": <number or null>,\n  "revenue_millions": <number or null>,\n  "industry": "<string>",\n  "data_found": <true if found real data, false if unsure>\n}\nReturn null if you cannot find actual data. Do NOT estimate.',
+			label: "Sonar System Prompt",
+		},
+		{
+			category: "enrichment",
+			key: "sonar_daily_limit",
+			value: 500,
+			label: "Sonar API daily limit",
 		},
 	];
 
@@ -163,46 +168,72 @@ async function seedGeography(prisma: Prisma) {
 		create: { code: "US", name: "United States" },
 	});
 
+	// NOTE: polygon field is left null here — run the regions-seed script
+	// (src/seed/regions.ts) after prod seed to populate polygons and generate cells.
 	const regions = [
 		{
 			code: "TX",
 			name: "Texas",
-			bboxSouth: 25.84,
-			bboxWest: -106.65,
-			bboxNorth: 36.5,
-			bboxEast: -93.51,
+			bboxSouth: 25.75,
+			bboxWest: -106.75,
+			bboxNorth: 36.75,
+			bboxEast: -93.5,
 		},
 		{
 			code: "CA",
 			name: "California",
-			bboxSouth: 32.53,
-			bboxWest: -124.48,
-			bboxNorth: 42.01,
-			bboxEast: -114.13,
+			bboxSouth: 32.5,
+			bboxWest: -124.5,
+			bboxNorth: 42.25,
+			bboxEast: -114.0,
 		},
 		{
 			code: "FL",
 			name: "Florida",
-			bboxSouth: 24.4,
-			bboxWest: -87.63,
-			bboxNorth: 31.0,
-			bboxEast: -80.03,
+			bboxSouth: 24.5,
+			bboxWest: -87.75,
+			bboxNorth: 31.25,
+			bboxEast: -79.5,
 		},
 		{
 			code: "NY",
 			name: "New York",
-			bboxSouth: 40.5,
-			bboxWest: -79.76,
-			bboxNorth: 45.01,
-			bboxEast: -71.86,
+			bboxSouth: 40.25,
+			bboxWest: -80.0,
+			bboxNorth: 45.25,
+			bboxEast: -71.75,
 		},
 		{
 			code: "IL",
 			name: "Illinois",
-			bboxSouth: 36.97,
-			bboxWest: -91.51,
-			bboxNorth: 42.51,
-			bboxEast: -87.5,
+			bboxSouth: 36.75,
+			bboxWest: -91.75,
+			bboxNorth: 42.75,
+			bboxEast: -87.0,
+		},
+		{
+			code: "OH",
+			name: "Ohio",
+			bboxSouth: 38.25,
+			bboxWest: -85.0,
+			bboxNorth: 43.0,
+			bboxEast: -78.75,
+		},
+		{
+			code: "PA",
+			name: "Pennsylvania",
+			bboxSouth: 39.5,
+			bboxWest: -80.75,
+			bboxNorth: 42.5,
+			bboxEast: -74.5,
+		},
+		{
+			code: "GA",
+			name: "Georgia",
+			bboxSouth: 30.25,
+			bboxWest: -85.75,
+			bboxNorth: 35.25,
+			bboxEast: -80.75,
 		},
 	];
 
@@ -218,16 +249,17 @@ async function seedGeography(prisma: Prisma) {
 
 async function main() {
 	console.log("🌱 Production seed starting…");
-	const adapter = new PrismaPg({
-		connectionString: process.env.DATABASE_URL ?? "",
-	});
+	if (!process.env.DATABASE_URL) {
+		throw new Error("DATABASE_URL is not set");
+	}
+	const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 	const prisma = new PrismaClient({ adapter });
-
 	try {
 		await seedAdminUser(prisma);
 		await seedSettings(prisma);
 		await seedGeography(prisma);
 		console.log("✅ Production seed complete");
+		console.log("   ➡ Run 'bun run db:seed-regions' to generate grid cells");
 	} finally {
 		await prisma.$disconnect();
 	}

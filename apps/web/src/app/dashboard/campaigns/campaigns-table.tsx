@@ -7,17 +7,27 @@ import {
 	type QueryResult,
 } from "@/components/data-table";
 import { Badge } from "@/components/ui/badge";
-import { client } from "@/lib/orpc";
+import { client, orpc } from "@/lib/orpc";
 
-type Campaign = {
+interface Campaign {
+	_count: { discoveryRuns: number };
+	createdAt: Date;
 	id: string;
 	name: string;
-	status: string;
-	searchTerm: string;
-	createdAt: Date;
 	regions: { region: { name: string; code: string } }[];
-	_count: { discoveryRuns: number };
-};
+	searchTerm: string;
+	status: string;
+}
+
+function statusVariant(status: string): "default" | "secondary" | "outline" {
+	if (status === "ACTIVE") {
+		return "default";
+	}
+	if (status === "PAUSED") {
+		return "secondary";
+	}
+	return "outline";
+}
 
 const columns: ColumnDef<Campaign, unknown>[] = [
 	{
@@ -36,15 +46,7 @@ const columns: ColumnDef<Campaign, unknown>[] = [
 		accessorKey: "status",
 		header: "Status",
 		cell: ({ row }) => (
-			<Badge
-				variant={
-					row.original.status === "ACTIVE"
-						? "default"
-						: row.original.status === "PAUSED"
-							? "secondary"
-							: "outline"
-				}
-			>
+			<Badge variant={statusVariant(row.original.status)}>
 				{row.original.status}
 			</Badge>
 		),
@@ -56,7 +58,7 @@ const columns: ColumnDef<Campaign, unknown>[] = [
 	},
 	{
 		id: "companies",
-		header: "Companies",
+		header: "Discovery Runs",
 		cell: ({ row }) => row.original._count.discoveryRuns,
 	},
 	{
@@ -101,7 +103,7 @@ export function CampaignsTable() {
 				},
 			]}
 			queryFn={queryFn}
-			queryKey="campaigns"
+			queryKey={orpc.campaigns.list.key({})}
 			searchPlaceholder="Search campaigns..."
 		/>
 	);

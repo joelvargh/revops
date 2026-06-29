@@ -218,6 +218,17 @@
           }
         ]
       ]
+    },
+    "Store Apollo Data": {
+      "main": [
+        [
+          {
+            "node": "Mark RESEARCH_PENDING",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
