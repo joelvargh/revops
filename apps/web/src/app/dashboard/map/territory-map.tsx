@@ -243,11 +243,11 @@ export function TerritoryMap() {
 
 					{/* US State Boundaries */}
 					<Source
-						data="https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json"
+						data="/us-states.geojson"
 						id="state-boundaries"
 						type="geojson"
 					>
-						<Layer
+						{/* <Layer
 							id="state-borders"
 							paint={{
 								"line-color": "#334155",
@@ -255,12 +255,12 @@ export function TerritoryMap() {
 								"line-opacity": 0.6,
 							}}
 							type="line"
-						/>
-						<Layer
+						/> */}
+						{/* <Layer
 							id="state-fill"
 							paint={{ "fill-color": "#64748b", "fill-opacity": 0.03 }}
 							type="fill"
-						/>
+						/> */}
 					</Source>
 
 					{/* Hover popup */}
