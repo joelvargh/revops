@@ -16,7 +16,7 @@ export const usersRouter = {
 					.optional(),
 			})
 		)
-		.handler(async ({ context, input }) => {
+		.handler(async ({ input }) => {
 			const { page, perPage, sort, filters } = input;
 			const { createPrismaClient } = await import("@revops/db");
 			const prisma = createPrismaClient();

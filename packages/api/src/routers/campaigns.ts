@@ -89,33 +89,37 @@ export const campaignsRouter = {
 						data: { cellSize: input.cellSize },
 					});
 				}
-				const cells: Array<{
-					regionId: string;
-					row: number;
-					col: number;
-					bboxSouth: number;
-					bboxWest: number;
-					bboxNorth: number;
-					bboxEast: number;
-				}> = [];
-				let row = 0;
-				for (let lat = region.bboxSouth; lat < region.bboxNorth; lat += size) {
-					let col = 0;
-					for (let lng = region.bboxWest; lng < region.bboxEast; lng += size) {
-						cells.push({
-							regionId: region.id,
-							row,
-							col,
-							bboxSouth: lat,
-							bboxWest: lng,
-							bboxNorth: Math.min(lat + size, region.bboxNorth),
-							bboxEast: Math.min(lng + size, region.bboxEast),
-						});
-						col++;
-					}
-					row++;
-				}
-				await prisma.gridCell.createMany({ data: cells, skipDuplicates: true });
+				const { generateClippedCells } = await import("@revops/db/geo-utils");
+				const bbox: [number, number, number, number] = [
+					region.bboxWest,
+					region.bboxSouth,
+					region.bboxEast,
+					region.bboxNorth,
+				];
+				const clippedCells = generateClippedCells(
+					{
+						type: "Feature",
+						geometry: region.polygon as
+							| import("@turf/helpers").Polygon
+							| import("@turf/helpers").MultiPolygon,
+						properties: {},
+					},
+					bbox,
+					size
+				);
+				await prisma.gridCell.createMany({
+					data: clippedCells.map((c) => ({
+						regionId: region.id,
+						row: c.row,
+						col: c.col,
+						bboxSouth: c.bboxSouth,
+						bboxWest: c.bboxWest,
+						bboxNorth: c.bboxNorth,
+						bboxEast: c.bboxEast,
+						geometry: c.geometry,
+					})),
+					skipDuplicates: true,
+				});
 				await prisma.region.update({
 					where: { id: region.id },
 					data: { cellsGenerated: true },

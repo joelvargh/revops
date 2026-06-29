@@ -7,7 +7,7 @@
           "interval": [
             {
               "field": "minutes",
-              "minutesInterval": 30
+              "minutesInterval": 5
             }
           ]
         }
@@ -16,19 +16,58 @@
       "typeVersion": 1.2,
       "position": [0, 0],
       "id": "t1",
-      "name": "Every 30 Min"
+      "name": "Every 5 Min"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT dr.id, dr.\"campaignId\", gc.\"bboxSouth\", gc.\"bboxWest\", gc.\"bboxNorth\", gc.\"bboxEast\", c.\"searchTerm\", c.source FROM discovery_run dr JOIN grid_cell gc ON gc.id = dr.\"gridCellId\" JOIN campaign c ON c.id = dr.\"campaignId\" WHERE dr.status = 'PENDING' AND c.status = 'ACTIVE' ORDER BY gc.row, gc.col LIMIT 1",
+        "query": "UPDATE discovery_run SET status = 'PENDING', \"startedAt\" = NULL WHERE status = 'RUNNING' AND \"startedAt\" < NOW() - INTERVAL '2 hours'",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [0, 0],
+      "id": "q0",
+      "name": "Reset Stalled Runs",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH claimed AS (SELECT dr.id FROM discovery_run dr JOIN grid_cell gc ON gc.id = dr.\"gridCellId\" JOIN campaign c ON c.id = dr.\"campaignId\" WHERE dr.status = 'PENDING' AND c.status = 'ACTIVE' ORDER BY gc.row, gc.col LIMIT 1 FOR UPDATE OF dr SKIP LOCKED) UPDATE discovery_run SET status = 'RUNNING', \"startedAt\" = NOW() FROM claimed WHERE discovery_run.id = claimed.id RETURNING discovery_run.id, discovery_run.\"campaignId\", discovery_run.\"gridCellId\"",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [220, 0],
       "id": "q1",
-      "name": "Get Next Pending Run",
+      "name": "Claim Next Pending Run",
+      "credentials": {
+        "postgres": {
+          "id": "mvx8V6R6tpqp0GEJ",
+          "name": "RevOps PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT dr.\"campaignId\", gc.geometry, c.\"searchTerm\" FROM discovery_run dr JOIN grid_cell gc ON gc.id = dr.\"gridCellId\" JOIN campaign c ON c.id = dr.\"campaignId\" WHERE dr.id = $1",
+        "additionalFields": {
+          "queryParams": "={{ [$('Claim Next Pending Run').first().json.id] }}"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 0],
+      "id": "q1b",
+      "name": "Fetch Run Details",
       "credentials": {
         "postgres": {
           "id": "mvx8V6R6tpqp0GEJ",
@@ -92,7 +131,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ searchQueries: [$('Get Next Pending Run').first().json.searchTerm], boundingBox: { south: $('Get Next Pending Run').first().json.bboxSouth, west: $('Get Next Pending Run').first().json.bboxWest, north: $('Get Next Pending Run').first().json.bboxNorth, east: $('Get Next Pending Run').first().json.bboxEast }, maxResults: 0, language: 'en', countryCode: 'US' }) }}",
+        "jsonBody": "={{ JSON.stringify({ searchQueries: [$('Fetch Run Details').first().json.searchTerm], customGeolocation: $('Fetch Run Details').first().json.geometry, maxResults: 0, language: 'en', countryCode: 'US' }) }}",
         "options": {
           "timeout": 30000
         },
@@ -197,7 +236,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const i = $json;\nconst campaignId = $('Get Next Pending Run').first().json.campaignId;\nreturn { json: {\n  name: i.title || i.name || 'Unknown',\n  domain: i.website ? i.website.replace(/^https?:\\/\\//, '').replace(/^www\\./, '').split('/')[0] : null,\n  phone: i.phone || null,\n  placeId: i.placeId || null,\n  googleMapsUrl: i.url || null,\n  address: i.address || null,\n  city: i.city || null,\n  state: i.state || null,\n  zip: i.postalCode || null,\n  country: 'US',\n  lat: i.location?.lat || null,\n  lng: i.location?.lng || null,\n  category: i.categoryName || null,\n  categories: JSON.stringify(i.categories || []),\n  website: i.website || null,\n  rating: i.totalScore || null,\n  reviewCount: i.reviewsCount || null,\n  isClosed: i.permanentlyClosed || false,\n  source: 'google_maps',\n  campaignId: campaignId\n}};"
+        "jsCode": "const i = $json;\nconst campaignId = $('Claim Next Pending Run').first().json.campaignId;\nreturn { json: {\n  name: i.title || i.name || 'Unknown',\n  domain: i.website ? i.website.replace(/^https?:\\/\\//, '').replace(/^www\\./, '').split('/')[0] : null,\n  phone: i.phone || null,\n  placeId: i.placeId || null,\n  googleMapsUrl: i.url || null,\n  address: i.address || null,\n  city: i.city || null,\n  state: i.state || null,\n  zip: i.postalCode || null,\n  country: 'US',\n  lat: i.location?.lat || null,\n  lng: i.location?.lng || null,\n  category: i.categoryName || null,\n  categories: JSON.stringify(i.categories || []),\n  website: i.website || null,\n  rating: i.totalScore || null,\n  reviewCount: i.reviewsCount || null,\n  isClosed: i.permanentlyClosed || false,\n  source: 'google_maps',\n  campaignId: campaignId\n}};"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -228,7 +267,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const items = $input.all();\nconst runId = $('Get Next Pending Run').first().json.id;\nconst total = $('Fetch Dataset').first().json.length || items.length;\nreturn [{ json: { runId, total, inserted: items.length } }];"
+        "jsCode": "const items = $input.all();\nconst runId = $('Claim Next Pending Run').first().json.id;\nconst total = $('Fetch Dataset').first().json.length || items.length;\nreturn [{ json: { runId, total, inserted: items.length } }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -264,18 +303,29 @@
     }
   ],
   "connections": {
-    "Every 30 Min": {
+    "Every 5 Min": {
       "main": [
         [
           {
-            "node": "Get Next Pending Run",
+            "node": "Reset Stalled Runs",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Next Pending Run": {
+    "Reset Stalled Runs": {
+      "main": [
+        [
+          {
+            "node": "Claim Next Pending Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Next Pending Run": {
       "main": [
         [
           {
@@ -290,7 +340,7 @@
       "main": [
         [
           {
-            "node": "Mark Running",
+            "node": "Fetch Run Details",
             "type": "main",
             "index": 0
           }
@@ -304,7 +354,7 @@
         ]
       ]
     },
-    "Mark Running": {
+    "Fetch Run Details": {
       "main": [
         [
           {

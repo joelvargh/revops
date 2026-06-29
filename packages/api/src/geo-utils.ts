@@ -49,7 +49,7 @@ export async function getStatePolygon(stateName: string) {
 		_statesCache = await resp.json();
 	}
 	return (
-		_statesCache!.features.find((f) => f.properties.name === stateName)
+		_statesCache?.features.find((f) => f.properties.name === stateName)
 			?.geometry ?? null
 	);
 }

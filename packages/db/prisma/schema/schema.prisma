@@ -139,7 +139,7 @@ model GridCell {
   bboxEast  Float
 
   /// [GeoJsonPolygon]
-  geometry  Json?  // GeoJSON Polygon for Apify customGeolocation
+  geometry  Json?  // GeoJSON Polygon/MultiPolygon for Apify customGeolocation
 
   region        Region         @relation(fields: [regionId], references: [id])
   discoveryRuns DiscoveryRun[]

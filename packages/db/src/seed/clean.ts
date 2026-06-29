@@ -1,12 +1,12 @@
 import type { PrismaClient } from "../../prisma/generated/client";
 
 export async function cleanDatabase(prisma: PrismaClient) {
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("cleanDatabase cannot run in production");
-  }
-  console.log("🧹 Cleaning database…");
+	if (process.env.NODE_ENV === "production") {
+		throw new Error("cleanDatabase cannot run in production");
+	}
+	console.log("🧹 Cleaning database…");
 
-  await prisma.$executeRawUnsafe(`
+	await prisma.$executeRawUnsafe(`
     DO $$ DECLARE r RECORD;
     BEGIN
       FOR r IN (
@@ -19,25 +19,27 @@ export async function cleanDatabase(prisma: PrismaClient) {
     END $$;
   `);
 
-  console.log("✅ Database cleaned");
+	console.log("✅ Database cleaned");
 }
 
 if (import.meta.main) {
-  const dotenv = await import("dotenv");
-  dotenv.config({ path: "../../apps/web/.env" });
-  const { PrismaPg } = await import("@prisma/adapter-pg");
-  const { PrismaClient: PC } = await import("../../prisma/generated/client");
+	const dotenv = await import("dotenv");
+	dotenv.config({ path: "../../apps/web/.env" });
+	const { PrismaPg } = await import("@prisma/adapter-pg");
+	const { PrismaClient: PC } = await import("../../prisma/generated/client");
 
-  if (process.env.NODE_ENV === "production") {
-    console.error("❌ Refusing to clean production database");
-    process.exit(1);
-  }
+	if (process.env.NODE_ENV === "production") {
+		console.error("❌ Refusing to clean production database");
+		process.exit(1);
+	}
 
-  const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
-  const prisma = new PC({ adapter });
-  try {
-    await cleanDatabase(prisma);
-  } finally {
-    await prisma.$disconnect();
-  }
+	const adapter = new PrismaPg({
+		connectionString: process.env.DATABASE_URL ?? "",
+	});
+	const prisma = new PC({ adapter });
+	try {
+		await cleanDatabase(prisma);
+	} finally {
+		await prisma.$disconnect();
+	}
 }

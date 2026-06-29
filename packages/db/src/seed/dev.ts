@@ -216,11 +216,12 @@ async function seedGridCells(
 		}
 
 		const bbox: [number, number, number, number] = [
-			rd.bbox.west,
-			rd.bbox.south,
-			rd.bbox.east,
-			rd.bbox.north,
+			region.bboxWest,
+			region.bboxSouth,
+			region.bboxEast,
+			region.bboxNorth,
 		];
+
 		const cells = generateClippedCells(
 			stateFeature as Feature<Polygon | MultiPolygon>,
 			bbox,
@@ -246,9 +247,7 @@ async function seedGridCells(
 		});
 		totalCells += cells.length;
 	}
-	console.log(
-		`  ✓ ${totalCells} grid cells created (polygon-clipped, zero ocean/overlap)`
-	);
+	console.log(`  ✓ ${totalCells} rectangular grid cells created`);
 }
 
 async function seedCampaigns(

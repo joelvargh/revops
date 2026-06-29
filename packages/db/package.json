@@ -33,6 +33,7 @@
     "@turf/intersect": "^7.3.5",
     "@turf/square-grid": "^7.3.5",
     "dotenv": "catalog:",
+    "h3-js": "^4.4.0",
     "pg": "^8.17.1",
     "zod": "catalog:"
   },
